@@ -5,20 +5,19 @@ Runs the full subsidence analysis pipeline in order.
 
 Usage:
     python 10_run_pipeline.py              # runs all enabled stages
-    python 10_run_pipeline.py --from 04   # resume from stage 04
-    python 10_run_pipeline.py --only 08   # run only stage 08
-    python 10_run_pipeline.py --skip 07   # skip stage 07
+    python 10_run_pipeline.py --from 04    # resume from stage 04
+    python 10_run_pipeline.py --only 07    # run only stage 07
+    python 10_run_pipeline.py --skip 06    # skip stage 06
 
 Stages:
-    01  Prepare reference grid (InSAR → valid mask + clean subsidence tif)
-    02  Derive terrain variables (slope, aspect, curvature, TWI, TPI, TRI)
-    03  Align all predictors to InSAR 27m reference grid
-    04  ERA5-Land NetCDF → GeoTIFF (temp, DDT, DDF, soil moisture)
-    05  Build predictor stack + flat parquet + QC histograms
-    06  Multicollinearity + VIF analysis
-    07  Spatial autocorrelation (Moran's I, LISA, semivariogram)
-    08  Random Forest model (spatial block CV, SHAP, permutation importance)
-    09  Spatial models: OLS + SEM + GWR
+    01  Prepare reference grid (InSAR -> valid mask + clean subsidence tif)
+    02  Convert NetCDF and vector files to GeoTIFF (ERA5, terrain, land cover, etc.)
+    03  Align all predictors to InSAR reference grid
+    04  Build predictor stack + flat parquet + QC histograms
+    05  Multicollinearity + VIF analysis
+    06  Spatial autocorrelation (Moran's I, LISA, semivariogram)
+    07  XGBoost model (spatial block CV, SHAP, permutation importance)
+    08  Spatial models: OLS + SEM + GWR
 
 Log: pipeline_run.log
 """
@@ -29,27 +28,27 @@ from pathlib import Path
 
 STAGES = {
     "01": {"script": "01_prepare_reference_grid.py",   "desc": "Prepare reference grid"},
-    "02": {"script": "02_derive_terrain_variables.py",  "desc": "Derive terrain variables"},
-    "03": {"script": "03_align_predictors.py",          "desc": "Align predictors"},
-    "04": {"script": "04_era5_to_geotiff.py",           "desc": "ERA5-Land → GeoTIFF"},
-    "05": {"script": "05_build_predictor_stack.py",     "desc": "Build predictor stack"},
-    "06": {"script": "06_multicollinearity_vif.py",     "desc": "Multicollinearity + VIF"},
-    "07": {"script": "07_spatial_autocorrelation.py",   "desc": "Spatial autocorrelation"},
-    "08": {"script": "08_random_forest_model.py",       "desc": "Random Forest model"},
-    "09": {"script": "09_spatial_model_gwr.py",         "desc": "OLS + SEM + GWR"},
+    "02": {"script": "02_files_to_geotiff.py",         "desc": "Convert NetCDF and vector files to GeoTIFF"},
+    "03": {"script": "03_align_predictors.py",         "desc": "Align predictors to reference grid"},
+    "04": {"script": "04_build_predictor_stack.py",    "desc": "Build predictor stack"},
+    "05": {"script": "05_qc_aligned_layers.py",    "desc": "Build predictor stack"},
+    "06": {"script": "06_multicollinearity_vif.py",    "desc": "Multicollinearity + VIF"},
+    "07": {"script": "07_spatial_autocorrelation.py",  "desc": "Spatial autocorrelation"},
+    "08": {"script": "08_xgboost_model.py",            "desc": "XGBoost model"},
+    "09": {"script": "09_spatial_model_gwr.py",        "desc": "Spatial models: OLS + SEM + GWR"},
 }
 
+# set False if done
 RUN_STAGES = {
     "01": True,
     "02": True,
     "03": True,
-    "04": True,   # set False if ERA5 GeoTIFFs already created
+    "04": True,
     "05": True,
     "06": True,
     "07": True,
     "08": True,
-    "09": True,
-}
+    "09": True,}
 
 SCRIPT_DIR = Path(__file__).parent
 LOG_PATH   = SCRIPT_DIR / "pipeline_run.log"
@@ -106,7 +105,7 @@ with open(LOG_PATH, "a") as logfile:
 
         script_path = SCRIPT_DIR / script
         if not script_path.exists():
-            msg = f"[ERROR] Stage {stage_id}: script not found → {script_path}"
+            msg = f"[ERROR] Stage {stage_id}: script not found -> {script_path}" 
             log(msg, logfile)
             results_summary.append({"stage": stage_id, "desc": desc,
                                      "status": "MISSING", "elapsed": "-"})
@@ -143,7 +142,7 @@ print("=" * 65)
 print(f"  {'Stage':<8} {'Description':<38} {'Status':<10} {'Time'}")
 print(f"  {'-'*7} {'-'*37} {'-'*9} {'-'*10}")
 for r in results_summary:
-    icon = {"OK": "✓", "FAILED": "✗", "SKIPPED": "–", "MISSING": "?"}.get(r["status"], "?")
+    icon = {"OK": "OK", "FAILED": "X", "SKIPPED": "-", "MISSING": "?"}.get(r["status"], "?")
     print(f"  {r['stage']:<8} {r['desc']:<38} {icon} {r['status']:<8} {r['elapsed']}")
 print(f"\n  Log: {LOG_PATH}")
 print("=" * 65)

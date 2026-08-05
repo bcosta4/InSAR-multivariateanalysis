@@ -1,0 +1,108 @@
+import pandas as pd
+import numpy as np
+import json
+from pathlib import Path
+import plotly.graph_objects as go
+import plotly.io as pio
+
+RUN_DIR = Path(r"E:\Processing\InSAR_multivariate_analysis\outputs\run_n5_20260721")
+DATA_PATH = RUN_DIR / "predictor_flat.parquet"
+BAND_NAMES_JSON = RUN_DIR / "band_names.json"
+
+CATEGORICAL_VARS = [
+    "landcover", "wetland_class", "pan_arctic_wetlands", "canopy_height_lt5m",
+    "woodyplant_dominance", "cavm", "surficial_geology", "ground_ice",
+    "dsw_trends", "permafrost_landcover_cls",
+]
+
+# Top-ranked variables from your correlation check
+VAR_A = "era5_ddf"                  # strongest continuous predictor
+VAR_B = "era5_t2m_mean"             # 2nd strongest, likely correlated with A
+VAR_C = "woodyplant_dominance"      # strongest categorical predictor
+N_BINS = 8
+
+df = pd.read_parquet(DATA_PATH)
+df = df[[VAR_A, VAR_B, VAR_C, "subsidence_mm_yr"]].dropna()
+print(f"n = {len(df):,} pixels after dropna")
+
+# ── Pairwise continuous-continuous interaction (2D binned heatmap) ──────────
+df["bin_A"] = pd.qcut(df[VAR_A], N_BINS, duplicates="drop")
+df["bin_B"] = pd.qcut(df[VAR_B], N_BINS, duplicates="drop")
+
+pivot_mean = df.pivot_table(
+    values="subsidence_mm_yr", index="bin_B", columns="bin_A", aggfunc="mean"
+)
+pivot_count = df.pivot_table(
+    values="subsidence_mm_yr", index="bin_B", columns="bin_A", aggfunc="count"
+)
+
+# Mask bins with too few pixels to be reliable
+pivot_mean_masked = pivot_mean.where(pivot_count >= 100)
+
+x_labels = [str(c) for c in pivot_mean_masked.columns]
+y_labels = [str(i) for i in pivot_mean_masked.index]
+
+fig1 = go.Figure(data=go.Heatmap(
+    z=pivot_mean_masked.values,
+    x=x_labels,
+    y=y_labels,
+    colorscale="RdBu_r",
+    colorbar=dict(title="Mean sub<br>(mm/yr)"),
+    zmid=0
+))
+fig1.update_layout(
+    title={"text": f"Subsidence by {VAR_A} x {VAR_B} bins (interaction check)<br>"
+                    f"<span style='font-size: 18px; font-weight: normal;'>Source: predictor_flat.parquet | binned means, n>=100/cell</span>"},
+)
+fig1.update_xaxes(title_text=VAR_A[:15], tickangle=45)
+fig1.update_yaxes(title_text=VAR_B[:15])
+fig1.write_image("interaction_heatmap_AB.png")
+with open("interaction_heatmap_AB.png.meta.json", "w") as f:
+    json.dump({"caption": f"Subsidence rate across {VAR_A} x {VAR_B} bins",
+                "description": "Heatmap testing for non-additive/threshold interaction between two top continuous predictors"}, f)
+
+# ── Continuous x categorical interaction (grouped bar/box style) ────────────
+df["bin_A_cat"] = pd.qcut(df[VAR_A], N_BINS, duplicates="drop")
+grouped = df.groupby(["bin_A_cat", VAR_C])["subsidence_mm_yr"].agg(["mean", "count"]).reset_index()
+grouped = grouped[grouped["count"] >= 100]
+
+top_cats = df[VAR_C].value_counts().head(6).index.tolist()
+grouped = grouped[grouped[VAR_C].isin(top_cats)]
+
+fig2 = go.Figure()
+for cat in top_cats:
+    sub = grouped[grouped[VAR_C] == cat]
+    fig2.add_trace(go.Scatter(
+        x=[str(b) for b in sub["bin_A_cat"]],
+        y=sub["mean"],
+        mode="lines+markers",
+        name=f"{VAR_C}={cat}"
+    ))
+fig2.update_layout(
+    title={"text": f"Subsidence by {VAR_A} bin, split by {VAR_C}<br>"
+                    f"<span style='font-size: 18px; font-weight: normal;'>Source: predictor_flat.parquet | top 6 categories, n>=100/cell</span>"},
+    legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="center", x=0.5)
+)
+fig2.update_xaxes(title_text=VAR_A[:15], tickangle=45)
+fig2.update_yaxes(title_text="Mean sub mm/yr")
+fig2.write_image("interaction_lines_A_by_C.png")
+with open("interaction_lines_A_by_C.png.meta.json", "w") as f:
+    json.dump({"caption": f"Subsidence vs {VAR_A}, split by {VAR_C} category",
+                "description": "Line chart testing whether the continuous predictor's slope differs across categorical groups"}, f)
+
+# ── Quantify non-additivity: does binned-mean deviate a lot from marginal sums? ──
+marginal_A = df.groupby("bin_A")["subsidence_mm_yr"].mean()
+marginal_B = df.groupby("bin_B")["subsidence_mm_yr"].mean()
+grand_mean = df["subsidence_mm_yr"].mean()
+
+additive_pred = pd.DataFrame(index=pivot_mean_masked.index, columns=pivot_mean_masked.columns, dtype=float)
+for b in additive_pred.index:
+    for a in additive_pred.columns:
+        additive_pred.loc[b, a] = (marginal_A.get(a, np.nan) - grand_mean) + (marginal_B.get(b, np.nan) - grand_mean) + grand_mean
+
+residual_interaction = (pivot_mean_masked - additive_pred)
+interaction_strength = float(np.nanmean(np.abs(residual_interaction.values)))
+print(f"\nMean |observed - additive prediction| across bins: {interaction_strength:.4f} mm/yr")
+print("(Larger value = stronger evidence of a true interaction, not just two additive main effects)")
+
+residual_interaction.to_csv(RUN_DIR / "interaction_residual_AB.csv")

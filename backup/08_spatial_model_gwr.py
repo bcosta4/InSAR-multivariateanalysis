@@ -192,7 +192,7 @@ if MGWR_AVAILABLE:
     ax.set_aspect("equal")
     plt.tight_layout()
     lr2_path = os.path.join(OUTPUT_DIR, "gwr_local_r2_map.png")
-    plt.savefig(lr2_path, dpi=150)
+    plt.savefig(lr2_path, dpi=300)
     plt.close()
     print(f"  Saved: {lr2_path}")
 
@@ -221,7 +221,7 @@ if MGWR_AVAILABLE:
         ax.set_aspect("equal")
         plt.tight_layout()
         coeff_path = os.path.join(OUTPUT_DIR, f"gwr_coeff_{vname}.png")
-        plt.savefig(coeff_path, dpi=150)
+        plt.savefig(coeff_path, dpi=300)
         plt.close()
         print(f"  Saved: {coeff_path}")
 

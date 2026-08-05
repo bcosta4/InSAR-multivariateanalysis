@@ -1,0 +1,81 @@
+import pandas as pd
+import numpy as np
+from scipy.stats import kruskal, pearsonr, spearmanr
+import json
+from pathlib import Path
+
+RUN_DIR = Path(r"E:\Processing\InSAR_multivariate_analysis\outputs\run_n5_20260721")
+DATA_PATH = RUN_DIR / "predictor_flat.parquet"
+BAND_NAMES_JSON = RUN_DIR / "band_names.json"
+
+# Same categorical list as script 08 — band_names.json itself doesn't tag variable type
+CATEGORICAL_VARS = [
+    "landcover", "wetland_class", "pan_arctic_wetlands", "canopy_height_lt5m",
+    "woodyplant_dominance", "cavm", "surficial_geology", "ground_ice",
+    "dsw_trends", "permafrost_landcover_cls",
+]
+
+with open(BAND_NAMES_JSON) as f:
+    all_feats = json.load(f)
+
+continuous_feats = [c for c in all_feats if c not in CATEGORICAL_VARS]
+categorical_feats = [c for c in all_feats if c in CATEGORICAL_VARS]
+
+print(f"Total bands in stack: {len(all_feats)}")
+print(f"Continuous: {len(continuous_feats)} | Categorical: {len(categorical_feats)}")
+
+df = pd.read_parquet(DATA_PATH)
+df = df[all_feats + ["subsidence_mm_yr"]].dropna(subset=["subsidence_mm_yr"])
+
+results = []
+
+for col in continuous_feats:
+    sub = df[[col, "subsidence_mm_yr"]].dropna()
+    if len(sub) < 30:
+        results.append({"variable": col, "type": "continuous", "n": len(sub),
+                         "pearson_r": np.nan, "pearson_p": np.nan,
+                         "spearman_r": np.nan, "spearman_p": np.nan,
+                         "eta_squared": np.nan, "kw_p": np.nan, "abs_effect": np.nan})
+        continue
+    x = sub[col].values
+    y = sub["subsidence_mm_yr"].values
+    pear_r, pear_p = pearsonr(x, y)
+    spear_r, spear_p = spearmanr(x, y)
+    results.append({
+        "variable": col, "type": "continuous", "n": len(sub),
+        "pearson_r": pear_r, "pearson_p": pear_p,
+        "spearman_r": spear_r, "spearman_p": spear_p,
+        "eta_squared": np.nan, "kw_p": np.nan,
+        "abs_effect": abs(pear_r)
+    })
+
+for col in categorical_feats:
+    sub = df[[col, "subsidence_mm_yr"]].dropna()
+    cats = sub[col].unique()
+    groups = [sub.loc[sub[col] == cat, "subsidence_mm_yr"].values for cat in cats
+              if (sub[col] == cat).sum() >= 30]
+    if len(groups) < 2:
+        results.append({"variable": col, "type": "categorical", "n": len(sub),
+                         "pearson_r": np.nan, "pearson_p": np.nan,
+                         "spearman_r": np.nan, "spearman_p": np.nan,
+                         "eta_squared": np.nan, "kw_p": np.nan, "abs_effect": np.nan})
+        continue
+    y_all = np.concatenate(groups)
+    stat, p = kruskal(*groups)
+    grand_mean = y_all.mean()
+    ss_between = sum(len(g) * (g.mean() - grand_mean) ** 2 for g in groups)
+    ss_total = sum((y_all - grand_mean) ** 2)
+    eta_sq = ss_between / ss_total
+    results.append({
+        "variable": col, "type": "categorical", "n": len(sub),
+        "pearson_r": np.nan, "pearson_p": np.nan,
+        "spearman_r": np.nan, "spearman_p": np.nan,
+        "eta_squared": eta_sq, "kw_p": p,
+        "abs_effect": eta_sq
+    })
+
+result_df = pd.DataFrame(results).sort_values("abs_effect", ascending=False)
+result_df.to_csv(RUN_DIR / "simple_correlation_check_full53.csv", index=False)
+
+print(f"\nAssessed {len(result_df)} of {len(all_feats)} total variables")
+print(result_df.to_string(index=False))

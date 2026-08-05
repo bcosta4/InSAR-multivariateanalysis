@@ -179,7 +179,7 @@ axes[1].set_title("Subsidence Rate Distribution (log Y)")
 
 plt.tight_layout()
 plot_path = os.path.join(OUTPUT_DIR, "subsidence_distribution.png")
-plt.savefig(plot_path, dpi=150)
+plt.savefig(plot_path, dpi=300)
 plt.close()
 print(f"\nSaved distribution plot: {plot_path}")
 

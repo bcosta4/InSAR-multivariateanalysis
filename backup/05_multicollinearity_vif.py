@@ -81,7 +81,7 @@ sns.heatmap(
 ax.set_title("Predictor Correlation Matrix (Spearman)", pad=12)
 plt.tight_layout()
 heatmap_path = os.path.join(OUTPUT_DIR, "correlation_heatmap.png")
-plt.savefig(heatmap_path, dpi=150)
+plt.savefig(heatmap_path, dpi=300)
 plt.close()
 print(f"Saved: {heatmap_path}")
 

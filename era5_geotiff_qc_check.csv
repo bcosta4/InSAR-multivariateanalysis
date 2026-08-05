@@ -1,0 +1,15 @@
+file,status,shape,dtype,n_valid,pct_valid,min,max,n_unique,flag
+era5_t2m_mean_2019_2024.tif,OK,"(21, 36)",float32,367,48.5,4.1736,7.0241,366,LOW_VALID_PCT(48.5%)
+era5_t2m_JJAS_mean_2019_2024.tif,OK,"(21, 36)",float32,367,48.5,7.2877,11.3216,366,LOW_VALID_PCT(48.5%)
+era5_t2m_ddt_annual_mean_2019_2024.tif,OK,"(21, 36)",float32,756,100.0,0.0,1477.7924,367,OK
+era5_t2m_ddf_annual_mean_2019_2024.tif,OK,"(21, 36)",float32,756,100.0,0.0,225.4934,367,OK
+era5_stl1_mean_2019_2024.tif,OK,"(21, 36)",float32,367,48.5,5.607,8.7196,366,LOW_VALID_PCT(48.5%)
+era5_stl1_JJAS_mean_2019_2024.tif,OK,"(21, 36)",float32,367,48.5,9.0544,13.1289,366,LOW_VALID_PCT(48.5%)
+era5_stl1_ddt_annual_mean_2019_2024.tif,OK,"(21, 36)",float32,756,100.0,0.0,1694.6344,367,OK
+era5_stl1_ddf_annual_mean_2019_2024.tif,OK,"(21, 36)",float32,756,100.0,0.0,189.7818,366,OK
+era5_ssr_annual_sum_mean_2019_2024.tif,OK,"(6, 21)",float32,126,100.0,0.0,4327076864.0,59,OK
+era5_ssr_JJAS_sum_mean_2019_2024.tif,OK,"(6, 21)",float32,126,100.0,0.0,3127521024.0,59,OK
+era5_tp_annual_sum_mean_2019_2024.tif,OK,"(6, 21)",float32,126,100.0,0.0,0.696,59,OK
+era5_tp_JJAS_sum_mean_2019_2024.tif,OK,"(6, 21)",float32,126,100.0,0.0,0.3645,59,OK
+era5_swvl1_mean_2019_2024.tif,OK,"(6, 21)",float32,59,46.8,0.176,0.4865,58,LOW_VALID_PCT(46.8%)
+era5_swvl1_JJAS_mean_2019_2024.tif,OK,"(6, 21)",float32,59,46.8,0.1183,0.4007,58,LOW_VALID_PCT(46.8%)

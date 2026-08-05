@@ -10,7 +10,8 @@ Outputs (written next to this script in ./outputs/):
   - subsidence_clean.tif       : velocity map with nodata set to NaN (float32)
 """
 
-import os, json, numpy as np, rasterio
+import os
+import json, numpy as np, rasterio
 from rasterio.enums import Resampling
 from pathlib import Path
 
@@ -18,10 +19,9 @@ from pathlib import Path
 INSAR_PATH  = r"E:/Processing/InSAR/results/Network2_ifg_unw_Stack_TC1_velocity_map_masked_slope5deg.tif"
 NODATA_IN   = -3.40282e+38       # original nodata sentinel
 NODATA_OUT  = np.nan
-
 OUT_DIR     = Path(__file__).parent / "outputs"
-# ──────────────────────────────────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────────────────────────────────────
 OUT_DIR.mkdir(exist_ok=True)
 
 print("=== 01 Prepare Reference Grid ===")

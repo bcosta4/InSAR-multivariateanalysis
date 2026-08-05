@@ -230,7 +230,7 @@ ax.set_xlabel("Permutation Importance (mean decrease R²)")
 ax.set_title("Random Forest — Feature Importance")
 plt.tight_layout()
 fi_path = os.path.join(OUTPUT_RESULT_DIR, "rf_feature_importance.png")
-plt.savefig(fi_path, dpi=150)
+plt.savefig(fi_path, dpi=300)
 plt.close()
 print(f"Saved: {fi_path}")
 
@@ -250,7 +250,7 @@ try:
                       show=False, max_display=15)
     plt.tight_layout()
     shap_path = os.path.join(OUTPUT_RESULT_DIR, "rf_shap_summary.png")
-    plt.savefig(shap_path, dpi=150)
+    plt.savefig(shap_path, dpi=300)
     plt.close()
     print(f"Saved: {shap_path}")
 except Exception as e:

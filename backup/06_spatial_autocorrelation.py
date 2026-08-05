@@ -131,7 +131,7 @@ if PYSAL_AVAILABLE:
     ax.set_aspect("equal")
     plt.tight_layout()
     lisa_path = os.path.join(OUTPUT_DIR, "lisa_cluster_map.png")
-    plt.savefig(lisa_path, dpi=150)
+    plt.savefig(lisa_path, dpi=300)
     plt.close()
     print(f"Saved: {lisa_path}")
 
@@ -179,7 +179,7 @@ if len(pairs) > 0:
     ax.grid(alpha=0.3)
     plt.tight_layout()
     vario_path = os.path.join(OUTPUT_DIR, "semivariogram.png")
-    plt.savefig(vario_path, dpi=150)
+    plt.savefig(vario_path, dpi=300)
     plt.close()
     print(f"Saved: {vario_path}")
     print("  Note: The lag distance where the semivariogram flattens (sill) indicates")
