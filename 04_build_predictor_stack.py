@@ -1,20 +1,37 @@
 r"""
 04_build_predictor_stack.py
 ──────────────────────────
-Builds the predictor stack from aligned rasters in the latest (or specified)
-run folder.
+Purpose
+-------
+Assembles all aligned predictor rasters from a given pipeline run into a single multi-band stack and a flattened tabular dataset restricted to valid InSAR pixels, alongside automated data-quality diagnostics.
 
-Inputs:
-- E:\Processing\InSAR_multivariate_analysis\outputs\run_nX_YYYYMMDD\aligned\*.tif
-- Reference products from 01_prepare_reference_grid.py
+Method
+------
+Each aligned raster is read and its own declared nodata sentinel (NaN, -9999, 0, etc., regardless of source dtype) is converted to NaN prior to stacking, so downstream statistics are computed only over genuinely valid data. 
+Per-variable diagnostics compute the percentage of nodata pixels within the InSAR valid-pixel mask, min/max, and unique-value counts, and flag variables as constant, near-constant (a single value covering more than a fixed dominant-fraction threshold), or entirely nodata across the valid mask - a diagnostic step to catch predictors that  would otherwise silently produce zero variable importance and blank VIF scores in later modeling stages.
 
-Outputs written into the SAME run folder:
-- predictor_stack.tif
-- predictor_flat.parquet
-- band_names.json
-- qc_variable_summary.csv
-- predictor_histograms.png
-- dead_variables_report.json
+Inputs
+------
+- outputs/run_nX_YYYYMMDD/aligned/*_aligned.tif: co-registered predictor rasters from script 03.
+- valid_mask.tif, subsidence_clean.tif (from 01): valid-pixel mask and target variable.
+
+Outputs
+-------
+- predictor_stack.tif: multi-band GeoTIFF of all aligned predictors.
+- predictor_flat.parquet: flattened table (one row per valid InSAR pixel) with pixel row/col, target variable, and all predictor values.
+- band_names.json: ordered list of predictor variable names corresponding to stack band order.
+- qc_variable_summary.csv: per-variable nodata percentage, min/max, unique-value count, and dead-variable diagnosis.
+- dead_variables_report.json: subset of variables flagged as constant, near-constant, or entirely missing.
+- predictor_histograms.png: distribution plot for every predictor over valid pixels.
+
+Dependencies
+------------
+rasterio, numpy, pandas, matplotlib.
+
+Reproducibility notes
+----------------------
+- Random seed: not applicable (deterministic aggregation and diagnostics).
+- Deterministic given identical inputs: Yes.
 """
 
 import re

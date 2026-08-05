@@ -1,6 +1,48 @@
+
 r"""
-08_spatial_model_gwr.py
-──────────────────────────────────────────────────────────────────────────────────
+09_spatial_model_gwr.py
+
+Purpose
+-------
+Fits and compares three spatial regression models - ordinary least squares (OLS), spatial error model (SEM), and geographically weighted regression (GWR) - to assess the extent of spatial non-stationarity in the relationship between subsidence and environmental predictors, and to quantify how much spatial autocorrelation remains unexplained by each. This is an explanatory (driver-attribution) analysis: the goal is to identify which variables explain observed InSAR subsidence patterns, not to build a predictive model.
+
+Method
+------
+The design matrix is built from continuous predictors plus dummy-encoded categoricals, pruned for near-empty dummy levels, zero variance, high pairwise correlation, and poor conditioning via iterative VIF removal.
+OLS and SEM are fit on this pruned matrix; GWR uses a further VIF- and modal-value-filtered subset of continuous predictors, with bandwidth selected via golden-section search and explicitly checked against its search ceiling to avoid reporting an unconverged boundary result.
+Residual spatial autocorrelation (Moran's I) is computed for every model on a common KNN spatial weights matrix, allowing direct comparison of how much spatial structure each model leaves unexplained.
+Standardized coefficients (OLS/SEM) and mean absolute local coefficients (GWR) are exported per variable - aggregating one-hot dummy coefficients back to their parent categorical variable name - so this script's outputs can feed directly into the cross-model variable-importance agreement table built downstream.
+
+Inputs
+------
+- predictor_flat.parquet: pixel-level design matrix with target variable and all candidate predictors.
+- pruned_feature_list.json: final retained feature set after multicollinearity pruning.
+- spatial_autocorrelation_results.json: semivariogram range, used to set GWR bandwidth search bounds.
+- subsidence_clean.tif: reference raster, used only to read pixel size.
+
+Outputs
+-------
+- design_matrix_pruning_log.csv: record of every column dropped and why.
+- gwr_modal_value_diagnostic.csv: features excluded from GWR for near-constant regional coverage.
+- gwr_local_r2_map.png: spatial map of GWR's local R2.
+- gwr_coefficient_maps/gwr_coeff_<feature>.png: spatial maps of GWR coefficients per retained predictor.
+- gwr_local_coefficient_summary.csv: one row per variable, mean absolute local GWR coefficient
+  (aggregated across dummy levels back to parent variable name where applicable) - feeds the
+  cross-model variable-importance agreement table.
+- ols_sem_standardized_coefficients.csv: one row per variable, standardized OLS and SEM
+  coefficients (aggregated across dummy levels back to parent variable name) - feeds the
+  cross-model variable-importance agreement table.
+- gwr_results.json, sem_results.json: model fit statistics and diagnostics.
+- model_comparison.csv: R2, AIC/AICc, and residual Moran's I/p-value for OLS, SEM, and GWR side by side.
+
+Dependencies
+------------
+scikit-learn, spreg, libpysal, esda, mgwr, rasterio, pandas, numpy, matplotlib.
+
+Reproducibility notes
+----------------------
+- Random seed: not directly set (models are deterministic closed-form/ iterative fits); systematic spatial thinning to SAMPLE_TARGET rows uses a fixed modulo-based rule, not random sampling, so is fully deterministic.
+- Deterministic given identical inputs: Yes, except GWR bandwidth search convergence, which can vary marginally with optimizer tolerance settings in the installed mgwr version.
 """
 
 import os
@@ -20,12 +62,11 @@ from pathlib import Path
 import rasterio
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-# ─── CONFIG ───────────────────────────────────────────────────────────────────
+# --- CONFIG -----------------------------------------------------------------
 PROJECT_DIR = Path(r"E:\Processing\InSAR_multivariate_analysis")
 PIPE_OUT = PROJECT_DIR / "outputs"
 REF_PATH = PROJECT_DIR / "scripts" / "outputs" / "subsidence_clean.tif"
 RUN_DIR = None
-
 
 CATEGORICAL_VARS = [
     "landcover", "wetland_class", "pan_arctic_wetlands", "canopy_height_lt5m",
@@ -45,22 +86,16 @@ GWR_BW_MIN_MULTIPLIER = 5
 GWR_BW_MIN_FLOOR_PTS = 100
 GWR_MAX_RETRY = 4
 GWR_BW_WIDEN_FACTOR = 1.75
-GWR_BW_CEILING_FRAC = 0.98     # NEW - flag if found bw is within 2% of bw_max
-GWR_BW_MAX_WIDEN_FACTOR = 2.0  # NEW - how much to widen bw_max on ceiling-hit
-GWR_MAX_CEILING_RETRY = 3      # NEW - separate retry budget for ceiling widening
-# ──────────────────────────────────────────────────────────────────────────────
+GWR_BW_CEILING_FRAC = 0.98
+GWR_BW_MAX_WIDEN_FACTOR = 2.0
+GWR_MAX_CEILING_RETRY = 3
+# ------------------------------------------------------------------------------
+
 def log(msg):
     print(msg, flush=True)
 
 @contextlib.contextmanager
 def suppress_stderr():
-    """Redirect the OS-level stderr file descriptor to os.devnull for the
-    duration of the block, then restore it. This operates below Python's
-    warnings module entirely (via os.dup2 on the raw fd), so it reliably
-    silences LinAlgWarning output regardless of whether it's emitted via
-    warnings.warn(), a compiled extension writing to stderr directly, or a
-    subprocess (which inherits the redirected fd) - immune to the
-    category-name/module-parsing issues that broke every prior attempt."""
     stderr_fd = sys.stderr.fileno()
     saved_fd = os.dup(stderr_fd)
     devnull_fd = os.open(os.devnull, os.O_WRONLY)
@@ -75,8 +110,6 @@ def suppress_stderr():
         os.close(saved_fd)
 
 def call_with_optional_pool(func, **kwargs):
-    """Call func(**kwargs), passing pool=None only if func's signature
-    supports it - forces serial execution where possible."""
     sig_params = inspect.signature(func).parameters
     if "pool" in sig_params:
         kwargs["pool"] = None
@@ -106,7 +139,6 @@ def morans_i_on_residuals(residuals, coords_px, k=K_NEIGHBORS):
     return float(mi.I), float(mi.p_sim)
 
 def compute_vif(Xz):
-    """Compute VIF for every column of a standardized DataFrame."""
     vifs = {}
     for col in Xz.columns:
         other_cols = [c for c in Xz.columns if c != col]
@@ -124,7 +156,6 @@ def compute_vif(Xz):
     return vifs
 
 def prune_design_matrix(X_df, min_dummy_count, corr_threshold, cond_threshold, is_dummy_mask):
-    """Remove near-empty dummies, zero-variance cols, greedily prune high pairwise correlation, verify full rank, THEN iteratively drop the highest-VIF column until the condition number is acceptable."""
     dropped = []
     X_df = X_df.copy()
 
@@ -173,16 +204,12 @@ def prune_design_matrix(X_df, min_dummy_count, corr_threshold, cond_threshold, i
     return X_df, dropped
 
 def modal_value_share(series):
-    """Fraction of samples equal to the single most common value."""
     vc = series.value_counts(dropna=True)
     if len(vc) == 0:
         return 1.0
     return float(vc.iloc[0] / len(series))
 
 def select_gwr_features(X_df, y, continuous_cols, max_features, vif_threshold, modal_share_max):
-    """Stage 1: drop features with modal_value_share > modal_share_max.
-    Stage 2: rank survivors by |corr with y|. Stage 3: iteratively drop
-    highest-VIF feature until all remaining have VIF < vif_threshold."""
     diag_rows = []
     eligible_cols = []
     for c in continuous_cols:
@@ -214,11 +241,29 @@ def select_gwr_features(X_df, y, continuous_cols, max_features, vif_threshold, m
             lowest_corr_col = corr_with_y[Xz.columns].idxmin()
             Xz = Xz.drop(columns=[lowest_corr_col])
 
-
     selected = list(Xz.columns)
     return selected, diag_df
 
-log("=== 08 Spatial Models: OLS -> SEM -> GWR (v13) ===")
+
+def aggregate_dummy_coefs_to_parent(coef_series, categorical_vars):
+    """Map dummy-encoded coefficient names (e.g. 'wetland_class_3') back to
+    their parent categorical variable name and aggregate by summing |coef|
+    across levels - so OLS/SEM coefficients are comparable to XGBoost's
+    native single-column categorical importance. Continuous variables pass
+    through unchanged."""
+    agg = {}
+    for name, val in coef_series.items():
+        parent = None
+        for cat in categorical_vars:
+            if name == cat or name.startswith(cat + "_"):
+                parent = cat
+                break
+        key = parent if parent is not None else name
+        agg[key] = agg.get(key, 0.0) + abs(float(val))
+    return pd.Series(agg).sort_values(ascending=False)
+
+
+log("=== 09 Spatial Models: OLS -> SEM -> GWR (v14 - added per-variable coefficient exports) ===")
 
 run_dir = get_run_dir()
 DATA_PATH = run_dir / "predictor_flat.parquet"
@@ -285,8 +330,14 @@ coords = df[["col", "row"]].values.astype(np.float64)
 y = df["subsidence_mm_yr"].values.reshape(-1, 1)
 
 model_comparison_rows = []
+ols_sem_coef_frames = {}  # NEW: collects standardized coefficient series per model
 
-# ── 1. OLS ────────────────────────────────────────────────────────────────────
+# Standardized X for coefficient comparability (z-scored, so coefficients are
+# directly comparable in magnitude across variables of different original units)
+X_z = (X_df - X_df.mean()) / X_df.std().replace(0, 1)
+y_z = (y.ravel() - y.ravel().mean()) / y.ravel().std()
+
+# -- 1. OLS --------------------------------------------------------------------
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
@@ -306,7 +357,15 @@ model_comparison_rows.append({
     "residual_moran_I": ols_moran_i, "residual_moran_p": ols_moran_p,
 })
 
-# ── 2. SEM (Spatial Error Model) ─────────────────────────────────────────────
+# NEW: standardized OLS coefficients (fit on z-scored X/y so coefficients are
+# directly interpretable as "std-devs of subsidence per std-dev of predictor")
+ols_z = LinearRegression().fit(X_z.values, y_z)
+ols_std_coefs = pd.Series(ols_z.coef_, index=feature_names)
+ols_sem_coef_frames["OLS_std_coef"] = aggregate_dummy_coefs_to_parent(ols_std_coefs, CATEGORICAL_VARS)
+log(f"  [OLS] Standardized coefficients computed for {len(feature_names)} raw columns -> "
+    f"{len(ols_sem_coef_frames['OLS_std_coef'])} variables after dummy aggregation")
+
+# -- 2. SEM (Spatial Error Model) -----------------------------------------------
 try:
     import libpysal
     import spreg
@@ -340,11 +399,33 @@ try:
                    "residual_moran_I": sem_moran_i, "residual_moran_p": sem_moran_p}
     with open(OUT_DIR / "sem_results.json", "w") as f:
         json.dump(sem_results, f, indent=2)
+
+    # NEW: standardized SEM coefficients. GM_Error betas include the constant
+    # (first row) and lambda (last row if appended) - slice to just the X coefs,
+    # matching feature_names order, then re-scale to standardized units using
+    # the same X_z/y_z std ratios (GM_Error itself is fit on raw units above,
+    # so we refit on standardized data purely for comparable coefficient scale).
+    sem_z = spreg.GM_Error(y_z.reshape(-1, 1), X_z.values, w=w, name_y="subsidence_z", name_x=feature_names)
+    n_x = len(feature_names)
+    sem_betas_x = sem_z.betas[1:1 + n_x].ravel()
+    sem_std_coefs = pd.Series(sem_betas_x, index=feature_names)
+    ols_sem_coef_frames["SEM_std_coef"] = aggregate_dummy_coefs_to_parent(sem_std_coefs, CATEGORICAL_VARS)
+    log(f"  [SEM] Standardized coefficients computed for {len(feature_names)} raw columns -> "
+        f"{len(ols_sem_coef_frames['SEM_std_coef'])} variables after dummy aggregation")
 except Exception as e:
     print(f"\n  !!! SEM FAILED: {type(e).__name__}: {e}", flush=True, file=sys.stderr)
     traceback.print_exc(file=sys.stderr)
 
-# ── 3. GWR ────────────────────────────────────────────────────────────────────
+# NEW: save aggregated OLS/SEM standardized coefficients per variable, ready
+# to be joined against XGBoost's native-categorical importance downstream.
+if ols_sem_coef_frames:
+    ols_sem_df = pd.DataFrame(ols_sem_coef_frames)
+    ols_sem_df.index.name = "variable"
+    ols_sem_df.to_csv(OUT_DIR / "ols_sem_standardized_coefficients.csv")
+    log(f"\n  Saved ols_sem_standardized_coefficients.csv ({len(ols_sem_df)} variables, "
+        f"columns: {list(ols_sem_df.columns)})")
+
+# -- 3. GWR ----------------------------------------------------------------------
 try:
     from mgwr.gwr import GWR
     from mgwr.sel_bw import Sel_BW
@@ -405,7 +486,6 @@ try:
             gwr_success = True
             log(f"  [GWR] Search converged: bandwidth={bw:.1f} (bw_max was {bw_max})")
 
-            # NEW: ceiling-pinning check. A bandwidth found right at bw_max is not a converged optimum - it means AICc was still improving when the search ran out of room. Widen and re-search rather than accepting a boundary artifact as the final answer.
             while (bw >= bw_max * GWR_BW_CEILING_FRAC) and (ceiling_retry < GWR_MAX_CEILING_RETRY):
                 ceiling_retry += 1
                 old_bw_max = bw_max
@@ -473,6 +553,7 @@ try:
     gwr_col_names = ["const"] + top_gwr_cols
     coeff_dir = OUT_DIR / "gwr_coefficient_maps"
     coeff_dir.mkdir(exist_ok=True)
+    gwr_mean_abs_coefs = {}  # NEW: accumulate mean |coef| per variable across pixels
     for i, col_name in enumerate(gwr_col_names):
         coeffs = gwr_model.params[:, i]
         fig, ax = plt.subplots(figsize=(6, 4.5))
@@ -487,7 +568,64 @@ try:
         safe_name = col_name.replace(" ", "_").replace("/", "_")
         plt.savefig(coeff_dir / f"gwr_coeff_{safe_name}.png", dpi=300)
         plt.close()
+        if col_name != "const":
+            gwr_mean_abs_coefs[col_name] = float(np.mean(np.abs(coeffs)))
     log(f"  [GWR] Saved local R2 map + {len(gwr_col_names)} coefficient maps to {coeff_dir}")
+
+    # UPDATED (v15): GWR local coefficient summary - now robust to local-collinearity
+    # outlier pixels. A pixel-level GWR coefficient can spike by 10-30x the typical
+    # magnitude when the local moving window happens to contain near-collinear
+    # neighbors, even for variables with low GLOBAL VIF (local collinearity is
+    # invisible to a global VIF check). A plain mean is not robust to this - a
+    # handful of outlier pixels can dominate the whole-variable summary statistic
+    # and distort the cross-model importance comparison downstream. We now report
+    # BOTH the mean and the median absolute coefficient per variable, plus an
+    # outlier-ratio diagnostic (mean / median) so any variable where the two summary
+    # statistics diverge sharply is flagged for manual inspection of its coefficient
+    # map before being trusted as a driver.
+    OUTLIER_RATIO_FLAG_THRESHOLD = 3.0  # mean/median > 3x suggests outlier-pixel-driven inflation
+
+    gwr_mean_abs_coefs = {}
+    gwr_median_abs_coefs = {}
+    gwr_p95_abs_coefs = {}
+    for i, col_name in enumerate(gwr_col_names):
+        if col_name == "const":
+            continue
+        coeffs = gwr_model.params[:, i]
+        abs_coeffs = np.abs(coeffs)
+        gwr_mean_abs_coefs[col_name] = float(np.mean(abs_coeffs))
+        gwr_median_abs_coefs[col_name] = float(np.median(abs_coeffs))
+        gwr_p95_abs_coefs[col_name] = float(np.percentile(abs_coeffs, 95))
+
+    gwr_mean_series = aggregate_dummy_coefs_to_parent(pd.Series(gwr_mean_abs_coefs), CATEGORICAL_VARS)
+    gwr_median_series = aggregate_dummy_coefs_to_parent(pd.Series(gwr_median_abs_coefs), CATEGORICAL_VARS)
+    gwr_p95_series = aggregate_dummy_coefs_to_parent(pd.Series(gwr_p95_abs_coefs), CATEGORICAL_VARS)
+
+    gwr_coef_summary_df = pd.DataFrame({
+        "mean_abs_coef": gwr_mean_series,
+        "median_abs_coef": gwr_median_series,
+        "p95_abs_coef": gwr_p95_series,
+    })
+    gwr_coef_summary_df["outlier_ratio_mean_over_median"] = (
+        gwr_coef_summary_df["mean_abs_coef"] / gwr_coef_summary_df["median_abs_coef"].replace(0, np.nan)
+    )
+    gwr_coef_summary_df["outlier_flag"] = (
+        gwr_coef_summary_df["outlier_ratio_mean_over_median"] > OUTLIER_RATIO_FLAG_THRESHOLD
+    )
+    gwr_coef_summary_df.index.name = "variable"
+    gwr_coef_summary_df = gwr_coef_summary_df.sort_values("mean_abs_coef", ascending=False)
+    gwr_coef_summary_df.to_csv(OUT_DIR / "gwr_local_coefficient_summary.csv")
+
+    n_flagged = int(gwr_coef_summary_df["outlier_flag"].sum())
+    log(f"  [GWR] Saved gwr_local_coefficient_summary.csv ({len(gwr_coef_summary_df)} variables, "
+        f"mean+median+p95 reported)")
+    if n_flagged > 0:
+        flagged_vars = gwr_coef_summary_df[gwr_coef_summary_df["outlier_flag"]].index.tolist()
+        log(f"  [GWR] WARNING: {n_flagged} variable(s) flagged outlier_flag=True "
+            f"(mean/median ratio > {OUTLIER_RATIO_FLAG_THRESHOLD}x, suggesting a small number of "
+            f"outlier pixels are inflating the mean): {flagged_vars}. "
+            f"Inspect their coefficient maps in gwr_coefficient_maps/ before treating mean_abs_coef "
+            f"as representative - consider using median_abs_coef instead for these variables.")
 
     gwr_results = {
         "R2": float(gwr_model.R2), "AICc": float(gwr_model.aicc), "bandwidth": float(bw),
@@ -497,9 +635,9 @@ try:
         "n_features_used": len(top_gwr_cols),
         "n_features_excluded_modal_filter": n_failed_modal,
         "retry_attempts": attempt,
-        "ceiling_retry_attempts": ceiling_retry,          # NEW
-        "bandwidth_pinned_at_final_ceiling": bool(bw >= bw_max * GWR_BW_CEILING_FRAC),  # NEW
-        "ceiling_widen_history": ceiling_hit_log,          # NEW
+        "ceiling_retry_attempts": ceiling_retry,
+        "bandwidth_pinned_at_final_ceiling": bool(bw >= bw_max * GWR_BW_CEILING_FRAC),
+        "ceiling_widen_history": ceiling_hit_log,
     }
     with open(OUT_DIR / "gwr_results.json", "w") as f:
         json.dump(gwr_results, f, indent=2)
@@ -508,9 +646,10 @@ except Exception as e:
     print(f"\n  !!! GWR FAILED: {type(e).__name__}: {e}", flush=True, file=sys.stderr)
     traceback.print_exc(file=sys.stderr)
 
-# ── Model comparison table ───────────────────────────────────────────────────
+# -- Model comparison table ------------------------------------------------------
 comp_df = pd.DataFrame(model_comparison_rows)
 comp_df.to_csv(OUT_DIR / "model_comparison.csv", index=False)
 log("\n  === MODEL COMPARISON ===")
 log(comp_df.to_string(index=False))
-log("\n  Done. -> Next: run 10_run_pipeline.py to orchestrate all stages")
+log("\n  Done. -> Next: run 09_consolidate_model_comparison.py to build the cross-model "
+    "variable-importance agreement table.")

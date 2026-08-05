@@ -1,28 +1,36 @@
 r"""
 07_spatial_autocorrelation.py
 ──────────────────────────────
-Spatial autocorrelation analysis on InSAR subsidence rates:
-  1. Global Moran's I (systematic grid subsample, preserves spatial adjacency)
-  2. LISA cluster map (High-High, Low-Low, outliers) with FDR correction
-     for multiple testing (Benjamini-Hochberg, via statsmodels)
-  3. Empirical semivariogram (range, sill, nugget estimation) in real-world
-     units (metres), fit with an exponential model via scikit-gstat
+Purpose
+-------
+Quantifies the degree and spatial structure of autocorrelation in InSAR subsidence rates, providing the diagnostic basis (global clustering, local hotspots, and characteristic spatial range) used to justify spatial modeling choices and bandwidth/block-size parameters in later stages.
 
-Notes on design choices:
-- Random pixel subsampling was REPLACED with systematic (regular-grid) thinning.
-  Randomly dropping pixels before building KNN weights breaks true spatial
-  adjacency (neighbors are no longer physically adjacent), which distorts
-  Moran's I. Systematic thinning (every Nth row/col) preserves the grid
-  structure while still reducing computational cost.
-- LISA local p-values are corrected for multiple testing via Benjamini-Hochberg
-  FDR (this is the standard correction recommended by Anselin for LISA maps;
-  without it, thousands of simultaneous local tests produce many false
-  "significant" clusters by chance alone).
-- The semivariogram is computed on real-world distances (metres), not pixel
-  indices, using the reference raster's pixel size, so the fitted range
-  parameter is scientifically interpretable (e.g. "spatial autocorrelation
-  extends to ~450m") and can be directly used to justify GWR/kriging
-  bandwidth choices downstream.
+Method
+------
+Computes Global Moran's I on a systematically (regular-grid) thinned subset of pixels, preserving true spatial adjacency for KNN spatial weights - avoiding the distortion random subsampling would introduce. 
+Local Indicators of Spatial Association (LISA) identify High-High/Low-Low/outlier clusters, with local p-values corrected for multiple testing via Benjamini-Hochberg FDR, following Anselin's recommended practice for LISA maps with thousands of simultaneous local tests. 
+An empirical semivariogram is fit using an exponential model on real-world distances (metres, derived from the reference raster's pixel size), yielding an interpretable spatial autocorrelation range used downstream to set GWR bandwidth search bounds and spatial cross-validation block sizes.
+
+Inputs
+------
+- predictor_flat.parquet (from 04): pixel-level subsidence values and row/col coordinates.
+- subsidence_clean.tif (from 01): reference raster, used only to read pixel size and CRS.
+
+Outputs
+-------
+- morans_scatterplot.png: Global Moran's I scatterplot.
+- lisa_cluster_map.png: spatial map of FDR-corrected LISA cluster classifications.
+- semivariogram.png: fitted exponential semivariogram.
+- spatial_autocorrelation_results.json: Global Moran's I, p-value, z-score, LISA significant-cluster counts (raw and FDR-corrected), and fitted semivariogram range/sill/nugget.
+
+Dependencies
+------------
+libpysal, esda, splot, statsmodels, scikit-gstat (skgstat), rasterio, numpy, pandas, matplotlib.
+
+Reproducibility notes
+----------------------
+- Random seed: 42 (fixed for the semivariogram point subsample when the thinned dataset exceeds SEMIVARIOGRAM_SAMPLE); LISA permutation test uses its own internal random permutations (not separately seeded).
+- Deterministic given identical inputs: Yes for Moran's I, systematic thinning, and semivariogram fitting; LISA p-values may show minor simulation variance run-to-run due to unseeded permutation testing.
 """
 
 import re

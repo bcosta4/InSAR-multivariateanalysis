@@ -1,26 +1,32 @@
 
 """
-05_qc_aligned_layers.py (v2 - NoData fix)
+05_qc_aligned_layers.py
 ─────────────────────────
-Automated QC check for ALL aligned predictor GeoTIFFs after the alignment
-step in the pipeline (run_nX_YYYYMMDD/aligned/).
+Purpose
+-------
+Automated quality-control check on all aligned predictor rasters prior to flattening into the model design matrix, flagging layers with missing-data issues, unexpected value ranges, or near-constant coverage.
 
-FIX vs v1: the previous version only masked NaN for validity, which does
-nothing on integer-typed rasters (int16/int32 cannot hold NaN). Categorical
-layers stored as int16 with a -9999 NoData sentinel were therefore counted
-as "100% valid" and their -9999 minimum triggered false-positive
-NEGATIVE_WHERE_UNEXPECTED flags (cavm, dsw_trends, ground_ice, landcover,
-pan_arctic_wetlands, permafrost_landcover_cls, wetland_class,
-woodyplant_dominance - all 8 in the first run were false positives).
+Method
+------
+For each aligned GeoTIFF, computes a valid-pixel mask using the raster's own declared NoData value combined with a fallback -9999 sentinel check, then reports percent valid coverage, min/max, and unique-value counts against fixed thresholds. Categorical layers are checked separately for unexpected negative values, which would indicate unmasked NoData contamination.
 
-This version reads the actual NoData value from each file's own rasterio
-profile (src.nodata) and excludes it from the valid-pixel mask, in addition
-to excluding NaN for float rasters. This makes pct_valid, min/max, and
-n_unique all computed only over genuinely valid data, regardless of dtype.
+Inputs
+------
+- outputs/run_nX_YYYYMMDD/aligned/*.tif: all aligned predictor rasters, co-registered to a common grid.
 
-Outputs (written into the same run folder):
-- aligned_layers_qc_report.csv
-- aligned_layers_qc_summary.txt
+Outputs
+-------
+- aligned_layers_qc_report.csv: per-layer statistics and flags.
+- aligned_layers_qc_summary.txt: human-readable summary of flagged layers.
+
+Dependencies
+------------
+rasterio, numpy, pandas.
+
+Reproducibility notes
+----------------------
+- Random seed: not applicable (deterministic statistics only).
+- Deterministic given identical inputs: Yes.
 """
 
 import re

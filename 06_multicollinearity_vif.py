@@ -1,29 +1,37 @@
 r"""
 06_multicollinearity_vif.py
 ────────────────────────────
-Multicollinearity screening for a mixed continuous + categorical predictor set.
+Purpose
+-------
+Screens the mixed continuous/categorical predictor set for multicollinearity and iteratively prunes variables until all remaining predictors fall below an equivalent-scale collinearity threshold, producing the final feature set used by all downstream models.
 
-Method:
-  1. Continuous variables: standard VIF (WITH intercept, via add_constant) -
-     matches the textbook/academic definition, not the no-intercept shortcut.
-  2. Categorical variables: one-hot encoded, then GVIF (Generalized VIF) is
-     computed per ORIGINAL variable (not per dummy column), using Fox & Monette
-     (1992)'s method. The adjusted score GVIF^(1/(2*df)) is reported so it sits
-     on the SAME scale as ordinary VIF (i.e. threshold ~3.16 corresponds to a
-     classic VIF=10 cutoff). This gives categorical and continuous variables
-     equal, comparable weight in the pruning process, per project requirement.
-  3. Iterative pruning: at each step, drop whichever variable (continuous VIF
-     or categorical GVIF^(1/2df)) is highest, until all are below threshold.
-  4. Spearman heatmap is still produced for continuous variables only (Spearman
-     correlation between category codes and continuous vars is not
-     statistically meaningful and is intentionally excluded).
+Method
+------
+Continuous variables are assessed via standard Variance Inflation Factor (VIF), computed with an intercept term to match the textbook definition.
+Categorical variables are one-hot encoded and assessed via Generalized VIF (GVIF; Fox & Monette, 1992), computed per original variable rather than per dummy column, then rescaled as GVIF^(1/(2*df)) so it sits on the same interpretive scale as ordinary VIF (threshold ~3.16 corresponds to a classic VIF=10 cutoff). 
+At each iteration, whichever variable - continuous or categorical - has the highest comparable-scale score is dropped, and the process repeats until all remaining variables are below their respective thresholds (VIF_THRESH=5.0, GVIF_ADJ_THRESH=3.16). 
+A Spearman correlation heatmap is produced separately for continuous variables only, since Spearman correlation between category codes and continuous variables is not statistically meaningful.
 
-Outputs (in the run folder):
-  - correlation_heatmap.png       (continuous variables only)
-  - vif_gvif_retained_variables.csv
-  - pruned_feature_list.json
-  - categorical_variable_map.json  (which dummy columns belong to which
-    original categorical variable, for downstream one-hot encoding reuse)
+Inputs
+------
+- predictor_flat.parquet (from 04): pixel-level design matrix with all candidate predictors and target variable.
+
+Outputs
+-------
+- correlation_heatmap.png: Spearman correlation matrix, continuous predictors only.
+- vif_gvif_retained_variables.csv: final VIF/GVIF scores for all retained variables.
+- vif_gvif_pruning_history.csv: record of each variable dropped, its type, and its score at the time of removal.
+- pruned_feature_list.json: final retained feature set, split into continuous/categorical/all.
+- categorical_variable_map.json: unique category values per retained categorical variable, for consistent downstream one-hot encoding.
+
+Dependencies
+------------
+statsmodels, numpy, pandas, matplotlib, seaborn.
+
+Reproducibility notes
+----------------------
+- Random seed: 42 (fixed for the SAMPLE_N row subsample used in VIF/GVIF computation and the correlation heatmap).
+- Deterministic given identical inputs: Yes.
 """
 
 import re

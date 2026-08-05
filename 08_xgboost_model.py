@@ -2,14 +2,41 @@
 r"""
 08_xgboost_model.py
 
-Outputs (same run folder):
-- xgb_cv_results.json
-- xgb_feature_importance.png / .csv
-- xgb_permutation_importance.csv
-- shap_summary_xgb.png
-- xgb_residual_map.png
-- pdp_ice_<feature>.png / .csv
-- pdp_ice_summary_grid.png
+Purpose
+-------
+Assesses whether the variable-importance ranking and directional relationships (SHAP, PDP/ICE) that XGBoost attributes to subsidence drivers are robust to spatial autocorrelation, rather than predicting subsidence for its own sake. 
+This script does not aim to produce the paper's headline predictive metric - it is a robustness/consistency check supporting the explanatory (driver-attribution) analysis carried out jointly with OLS, SEM, and GWR.
+
+Method
+------
+Predictors are read directly from the pruned feature list with categorical variables passed natively (no one-hot encoding). 
+Spatially-blocked cross-validation (block size derived from the fitted semivariogram range) is used NOT to benchmark predictive accuracy, but to test whether the explained-variance level and residual spatial structure are stable across independent spatial folds - i.e. whether the driver-importance signal generalizes across the landscape rather than being an artifact of local spatial autocorrelation. 
+Out-of-fold residuals across all folds are pooled and tested for remaining spatial autocorrelation (Moran's I), giving a like-for-like diagnostic against OLS/SEM/GWR residual Moran's I. 
+A final model is refit on all data using the mean early-stopping iteration count from cross-validation, used solely for feature importance, permutation importance, SHAP values, and partial-dependence/ICE plots - the variable-attribution outputs that feed the paper's explanatory narrative.
+
+Inputs
+------
+- predictor_flat.parquet: pixel-level design matrix with target variable (subsidence_mm_yr) and all candidate predictors.
+- pruned_feature_list.json: final retained feature set (continuous/categorical split) after multicollinearity pruning.
+- spatial_autocorrelation_results.json: semivariogram parameters used to set the spatial CV block size.
+
+Outputs
+-------
+- xgb_cv_results.json: spatial-fold explained-variance range, out-of-fold residual Moran's I, and model configuration (robustness diagnostics, NOT a predictive benchmark).
+- xgb_feature_importance.png / .csv: gain-based variable ranking.
+- xgb_permutation_importance.csv: held-out permutation importance, used as the primary cross-model ranking input for 09_consolidate_model_comparison.py.
+- shap_summary_xgb.png: SHAP value distribution per variable (direction + magnitude of driver effects).
+- xgb_residual_map.png: spatial map of in-sample residuals.
+- pdp_ice_<feature>.png / .csv, pdp_ice_summary_grid.png: partial-dependence and individual conditional expectation plots for top-ranked variables (functional form of each driver's effect).
+
+Dependencies
+------------
+xgboost, scikit-learn, shap, pandas, numpy, matplotlib, joblib, libpysal, esda.
+
+Reproducibility notes
+----------------------
+- Random seed: 42 (fixed throughout: model fit, permutation importance, SHAP sampling, PDP/ICE sampling).
+- Deterministic given identical inputs: Yes, modulo XGBoost's histogram-based tree construction which can show minor floating-point nondeterminism across hardware/thread-count changes.
 """
 
 import re
@@ -24,6 +51,8 @@ from sklearn.metrics import r2_score, mean_squared_error
 from sklearn.inspection import permutation_importance
 from joblib import parallel_backend
 import xgboost as xgb
+import libpysal
+import esda
 
 PROJECT_DIR = Path(r"E:\Processing\InSAR_multivariate_analysis")
 PIPE_OUT = PROJECT_DIR / "outputs"
@@ -35,10 +64,13 @@ CATEGORICAL_VARS = [
     "dsw_trends", "permafrost_landcover_cls",
 ]
 
-# Spatial features added to close the XGBoost vs GWR performance gap. Uses pixel row/col (always available in predictor_flat.parquet) rather than requiring a separate CRS x/y or coastline vector lookup.
+# Spatial features included so XGBoost's variable-importance ranking is tested against
+# an explicit location signal - if a predictor still outranks x_norm/y_norm/dist_to_center,
+# that is direct evidence the predictor carries explanatory signal beyond pure spatial position.
 SPATIAL_FEATURE_NAMES = ["x_norm", "y_norm", "dist_to_center"]
 
-# CV folds: was 2 (checkerboard parity), now hashed into N_FOLDS bins for a materially more robust CV mean/std estimate.
+# Spatial folds: was 2 (checkerboard parity), now hashed into N_FOLDS bins for a materially
+# more robust estimate of how stable the explained-variance level is across the landscape.
 N_FOLDS = 8
 
 XGB_PARAMS = dict(
@@ -62,6 +94,10 @@ FALLBACK_BLOCK_SIZE_PX = 50
 PERM_SAMPLE_N = 20_000
 SHAP_SAMPLE_N = 1000
 
+# Residual Moran's I config (robustness diagnostic, comparable to OLS/SEM/GWR)
+MORAN_K_NEIGHBORS = 8
+MORAN_MAX_PTS = 20_000   # esda.Moran / KNN weights build cost scales with n; subsample OOF residuals for this diagnostic only
+
 # PDP + ICE config
 TOP_N_FEATURES = 12
 ICE_DISPLAY_N = 150          # number of thin ICE lines actually drawn (readability)
@@ -80,7 +116,21 @@ def get_run_dir():
         raise RuntimeError(f"No run folders found in {PIPE_OUT}.")
     return runs[-1]
 
-print("=== 07 XGBoost Model (tuned, v5 - spatial features + 8-fold CV + tighter regularization) ===")
+def morans_i_on_residuals(residuals, coords_px, k=MORAN_K_NEIGHBORS, max_pts=MORAN_MAX_PTS, seed=42):
+    """Global Moran's I on residuals, subsampled if needed for tractable KNN weight
+    construction. Comparable directly to OLS/SEM/GWR residual_moran_I in gwr_results.json."""
+    n = len(residuals)
+    if n > max_pts:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(n, max_pts, replace=False)
+        residuals = residuals[idx]
+        coords_px = coords_px[idx]
+    w = libpysal.weights.KNN.from_array(coords_px, k=k)
+    w.transform = "r"
+    mi = esda.Moran(residuals, w)
+    return float(mi.I), float(mi.p_sim), int(len(residuals))
+
+print("=== 07 XGBoost Driver-Attribution Robustness Check (v7 - explanatory framing, not predictive benchmark) ===")
 print(f" Executing script: {Path(__file__).resolve()}")
 
 run_dir = get_run_dir()
@@ -105,8 +155,7 @@ df = pd.read_parquet(DATA_PATH)
 df = df[["row", "col", "subsidence_mm_yr"] + feature_cols_raw].dropna()
 print(f" {len(df):,} complete rows")
 
-# --- Spatial features (STEP 1) -------------------------------------------- 
-# Gives XGBoost explicit location signal, analogous to what GWR gets natively by fitting spatially-varying coefficients.
+# --- Spatial features (location-signal control) --------------------------
 df["x_norm"] = (df["col"] - df["col"].min()) / (df["col"].max() - df["col"].min())
 df["y_norm"] = (df["row"] - df["row"].min()) / (df["row"].max() - df["row"].min())
 cx, cy = df["col"].mean(), df["row"].mean()
@@ -115,7 +164,7 @@ df["dist_to_center"] = (dist_raw - dist_raw.min()) / (dist_raw.max() - dist_raw.
 
 continuous_feats = continuous_feats + SPATIAL_FEATURE_NAMES
 feature_cols_raw = feature_cols_raw + SPATIAL_FEATURE_NAMES
-print(f" Added {len(SPATIAL_FEATURE_NAMES)} spatial features: {SPATIAL_FEATURE_NAMES}")
+print(f" Added {len(SPATIAL_FEATURE_NAMES)} spatial control features: {SPATIAL_FEATURE_NAMES}")
 # ----------------------------------------------------------------------------
 
 for c in categorical_feats:
@@ -135,7 +184,7 @@ y = df["subsidence_mm_yr"].values
 rows = df["row"].values
 cols = df["col"].values
 print(f" Feature matrix: {X_df.shape[1]} columns ({len(continuous_feats)} continuous [incl. "
-      f"{len(SPATIAL_FEATURE_NAMES)} spatial], {len(categorical_feats)} native categorical - NO one-hot expansion)")
+      f"{len(SPATIAL_FEATURE_NAMES)} spatial control], {len(categorical_feats)} native categorical - NO one-hot expansion)")
 
 block_size_px = FALLBACK_BLOCK_SIZE_PX
 if SPATIAL_JSON.exists():
@@ -147,18 +196,19 @@ if SPATIAL_JSON.exists():
         block_size_px = max(10, int(round(vgm_range_m / px_size)))
         print(f" Block size from semivariogram: {block_size_px}px (SAME as RF run)")
 
-# --- Spatial CV folds (STEP 2) ---------------------------------------------
-# Was: 2-fold checkerboard parity ((block_row + block_col) % 2).
-# Now: hashed into N_FOLDS bins for a materially more robust CV mean/std.
+# --- Spatial CV folds (robustness partitioning, not a train/test benchmark split) ---
 block_row = (rows // block_size_px).astype(int)
 block_col = (cols // block_size_px).astype(int)
 checker = (block_row * 1000003 + block_col) % N_FOLDS
 # ----------------------------------------------------------------------------
 
-print(f" Running 2D grid-block CV (hashed, block={block_size_px}px, {N_FOLDS} folds, "
+print(f" Running 2D grid-block spatial fold split (hashed, block={block_size_px}px, {N_FOLDS} folds, "
       f"early_stopping={EARLY_STOPPING_ROUNDS} rounds)...")
 
+coords_px_all = np.column_stack([cols, rows]).astype(np.float64)
+
 cv_r2, cv_rmse, cv_n, cv_best_iter = [], [], [], []
+oof_idx_list, oof_true_list, oof_pred_list = [], [], []
 for fold in range(N_FOLDS):
     test_mask = checker == fold
     train_mask = ~test_mask
@@ -175,42 +225,60 @@ for fold in range(N_FOLDS):
     rmse = np.sqrt(mean_squared_error(y[test_mask], y_pred))
     best_iter = model.best_iteration
     cv_r2.append(r2); cv_rmse.append(rmse); cv_n.append(int(test_mask.sum())); cv_best_iter.append(int(best_iter))
+    oof_idx_list.append(np.where(test_mask)[0])
+    oof_true_list.append(y[test_mask])
+    oof_pred_list.append(y_pred)
     print(f" Fold {fold+1}/{N_FOLDS}: n_test={test_mask.sum():,} R2={r2:.3f} RMSE={rmse:.3f} "
           f"best_iteration={best_iter} (of {XGB_PARAMS['n_estimators']} ceiling)")
 
-print(f"\n *** SPATIAL CV PERFORMANCE (comparable directly to rf_cv_results.json) ***")
-print(f" CV R2 : {np.mean(cv_r2):.3f} +/- {np.std(cv_r2):.3f}  (n_folds_used={len(cv_r2)})")
-print(f" CV RMSE: {np.mean(cv_rmse):.3f} +/- {np.std(cv_rmse):.3f}")
+print(f"\n *** ROBUSTNESS CHECK: explained variance across independent spatial folds ***")
+print(f" (NOT a predictive benchmark - tests whether driver signal generalizes across the landscape)")
+print(f" Fold R2 : {np.mean(cv_r2):.3f} +/- {np.std(cv_r2):.3f}  (n_folds_used={len(cv_r2)})")
+print(f" Fold RMSE: {np.mean(cv_rmse):.3f} +/- {np.std(cv_rmse):.3f}")
 print(f" Mean best_iteration across folds: {np.mean(cv_best_iter):.0f} "
       f"(if far below {XGB_PARAMS['n_estimators']}, early stopping is working as intended)")
 
+# --- Out-of-fold residual Moran's I (comparable to OLS/SEM/GWR residual_moran_I) ----
+oof_idx = np.concatenate(oof_idx_list)
+oof_true = np.concatenate(oof_true_list)
+oof_pred = np.concatenate(oof_pred_list)
+oof_resid = oof_true - oof_pred
+oof_coords = coords_px_all[oof_idx]
+oof_moran_I, oof_moran_p, oof_moran_n = morans_i_on_residuals(oof_resid, oof_coords)
+print(f"\n *** OUT-OF-FOLD RESIDUAL SPATIAL AUTOCORRELATION (comparable to OLS/SEM/GWR) ***")
+print(f" Residual Moran's I : {oof_moran_I:.4f} (p={oof_moran_p:.4f}, n={oof_moran_n:,})")
+print(f" Compare against OLS/SEM/GWR residual_moran_I - a lower value indicates less unexplained")
+print(f" spatial structure left in the driver-attribution model's residuals.")
+# ----------------------------------------------------------------------------
+
 n_trees_final = int(np.mean(cv_best_iter)) if cv_best_iter else XGB_PARAMS["n_estimators"]
 print(f"\n Fitting final model on all data with n_estimators={n_trees_final} "
-      f"(fixed from CV early-stopping result, for SHAP/importance/residuals/PDP ONLY)...")
+      f"(fixed from fold early-stopping result, for SHAP/importance/residuals/PDP - "
+      f"the explanatory outputs, NOT for predictive deployment)...")
 full_params = {**XGB_PARAMS, "n_estimators": max(50, n_trees_final)}
 model_full = xgb.XGBRegressor(**full_params)
 model_full.fit(X_df, y)
 y_pred_full = model_full.predict(X_df)
 insample_r2 = r2_score(y, y_pred_full)
 insample_rmse = np.sqrt(mean_squared_error(y, y_pred_full))
-print(f" [IN-SAMPLE ONLY] R2={insample_r2:.4f} RMSE={insample_rmse:.4f}")
-print(f" Overfitting gap check: in-sample R2 ({insample_r2:.3f}) vs CV R2 "
+print(f" [FULL-DATA FIT, for attribution outputs only] R2={insample_r2:.4f} RMSE={insample_rmse:.4f}")
+print(f" Full-data fit vs fold-averaged explained variance: ({insample_r2:.3f}) vs "
       f"({np.mean(cv_r2):.3f}) -> ratio={insample_r2/max(np.mean(cv_r2),1e-6):.1f}x "
-      f"(compare against RF's ~7x gap)")
+      f"(large ratio = attribution outputs below may reflect local overfitting; interpret with caution)")
 
 importances = model_full.feature_importances_
 fi_df = pd.DataFrame({"feature": feature_names, "importance": importances}).sort_values("importance", ascending=True)
 fig, ax = plt.subplots(figsize=(7, max(4, len(feature_names) * 0.3)))
 ax.barh(fi_df["feature"], fi_df["importance"], color="#2196F3", edgecolor="none")
 ax.set_xlabel("Gain-based Importance")
-ax.set_title("XGBoost Feature Importance (native categorical + spatial)", fontsize=10)
+ax.set_title("XGBoost Variable Importance (native categorical + spatial control)", fontsize=10)
 ax.tick_params(labelsize=6)
 plt.tight_layout()
 plt.savefig(OUT_DIR / "xgb_feature_importance.png", dpi=150)
 plt.close()
 fi_df.to_csv(OUT_DIR / "xgb_feature_importance.csv", index=False)
 
-print(" Computing permutation importance (held-out fold 0)...")
+print(" Computing permutation importance (held-out fold 0) - primary ranking input for cross-model comparison...")
 test_mask = checker == 0
 rng = np.random.default_rng(42)
 sub_idx = rng.choice(np.where(test_mask)[0], size=min(PERM_SAMPLE_N, test_mask.sum()), replace=False)
@@ -224,7 +292,7 @@ perm_df.to_csv(OUT_DIR / "xgb_permutation_importance.csv", index=False)
 
 try:
     import shap
-    print(" Computing SHAP values (native TreeExplainer)...")
+    print(" Computing SHAP values (native TreeExplainer) - direction and magnitude of each driver's effect...")
     rng_shap = np.random.RandomState(42)
     idx = rng_shap.choice(len(X_df), min(SHAP_SAMPLE_N, len(X_df)), replace=False)
     Xs = X_df.iloc[idx]
@@ -235,6 +303,8 @@ try:
     plt.tight_layout()
     plt.savefig(OUT_DIR / "shap_summary_xgb.png", dpi=150)
     plt.close()
+    mean_abs_shap = pd.DataFrame({"feature": feature_names, "mean_abs_shap": np.abs(shap_vals).mean(axis=0)})
+    mean_abs_shap.sort_values("mean_abs_shap", ascending=False).to_csv(OUT_DIR / "xgb_mean_abs_shap.csv", index=False)
 except Exception as e:
     print(f" SHAP skipped: {type(e).__name__}: {e}")
 
@@ -245,38 +315,45 @@ fig, ax = plt.subplots(figsize=(8, 6))
 sc = ax.scatter(df_res["col"], df_res["row"], c=residuals, cmap="RdBu_r",
                 vmin=np.percentile(residuals, 2), vmax=np.percentile(residuals, 98), s=0.5, marker="s")
 plt.colorbar(sc, ax=ax, label="Residual (mm/yr)")
-ax.set_title("XGBoost Residuals (IN-SAMPLE fit): Observed - Predicted (mm/yr)", fontsize=10)
+ax.set_title("XGBoost Residuals (full-data attribution fit): Observed - Predicted (mm/yr)", fontsize=10)
 ax.invert_yaxis(); ax.set_aspect("equal")
 plt.tight_layout()
 plt.savefig(OUT_DIR / "xgb_residual_map.png", dpi=150)
 plt.close()
 
 cv_results = {
-    "cv_r2_mean": float(np.mean(cv_r2)), "cv_r2_std": float(np.std(cv_r2)),
-    "cv_rmse_mean": float(np.mean(cv_rmse)), "cv_rmse_std": float(np.std(cv_rmse)),
-    "cv_n_per_fold": cv_n, "cv_best_iteration_per_fold": cv_best_iter,
+    "framing": "explanatory driver-attribution robustness check, NOT a predictive benchmark",
+    "fold_r2_mean": float(np.mean(cv_r2)), "fold_r2_std": float(np.std(cv_r2)),
+    "fold_rmse_mean": float(np.mean(cv_rmse)), "fold_rmse_std": float(np.std(cv_rmse)),
+    "fold_n_per_fold": cv_n, "fold_best_iteration_per_fold": cv_best_iter,
     "n_folds": len(cv_r2), "block_size_px": block_size_px,
-    "cv_method": f"2D hashed grid-block (spatial), {N_FOLDS} folds - "
+    "fold_method": f"2D hashed grid-block (spatial), {N_FOLDS} folds - "
                  f"upgraded from 2-fold checkerboard parity for more robust std",
     "n_features": X_df.shape[1], "categorical_handling": "native (enable_categorical=True)",
-    "spatial_features_added": SPATIAL_FEATURE_NAMES,
-    "in_sample_r2_NOT_a_performance_metric": float(insample_r2),
-    "in_sample_rmse_NOT_a_performance_metric": float(insample_rmse),
+    "spatial_control_features": SPATIAL_FEATURE_NAMES,
+    "full_data_fit_r2_attribution_only": float(insample_r2),
+    "full_data_fit_rmse_attribution_only": float(insample_rmse),
     "n_trees_final_model": full_params["n_estimators"],
     "model": "XGBoost", "xgb_params": {k: v for k, v in XGB_PARAMS.items()},
+    "oof_residual_spatial_autocorrelation": {
+        "method": "Global Moran's I on pooled out-of-fold spatial-fold residuals, "
+                  "comparable directly to OLS/SEM/GWR residual_moran_I",
+        "k_neighbors": MORAN_K_NEIGHBORS, "n_used": oof_moran_n,
+        "moran_I": oof_moran_I, "moran_p": oof_moran_p,
+    },
 }
 with open(OUT_DIR / "xgb_cv_results.json", "w") as f:
     json.dump(cv_results, f, indent=2)
 print("\n Saved xgb_cv_results.json")
 
-# ─── PDP + centered-ICE plots (merged from 07c) ────────────────────────────
-print("\n=== PDP + centered-ICE plots (top features by permutation importance) ===")
+# ─── PDP + centered-ICE plots: functional form of each driver's effect ────
+print("\n=== PDP + centered-ICE plots (top variables by permutation importance) ===")
 print(" CAVEAT: ICE curves are drawn from spatially autocorrelated pixels, "
       "not independent samples - percentile bands below somewhat understate "
       "true pixel-to-pixel uncertainty.")
 
 top_features = perm_df["feature"].head(TOP_N_FEATURES).tolist()
-print(f" Top {TOP_N_FEATURES} features: {top_features}")
+print(f" Top {TOP_N_FEATURES} variables: {top_features}")
 
 rng_pdp = np.random.default_rng(42)
 stability_idx = rng_pdp.choice(len(X_df), size=min(PDP_STABILITY_N, len(X_df)), replace=False)
@@ -373,7 +450,7 @@ for feature in top_features:
         pdp_data_store[feature] = (x_vals, ice_curves)
     print(f"   Saved pdp_ice_{safe_name}.png / .csv")
 
-print(" Generating summary grid (PDP panel only, all top features)...")
+print(" Generating summary grid (PDP panel only, all top variables)...")
 n_cols = 3
 n_rows = int(np.ceil(len(top_features) / n_cols))
 fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
@@ -394,10 +471,11 @@ for i, feature in enumerate(top_features):
     axes[i].set_title(feature, fontsize=9)
 for j in range(len(top_features), len(axes)):
     axes[j].axis("off")
-plt.suptitle(f"PDP: Top {TOP_N_FEATURES} Features by Permutation Importance", fontsize=12)
+plt.suptitle(f"PDP: Top {TOP_N_FEATURES} Variables by Permutation Importance", fontsize=12)
 plt.tight_layout()
 plt.savefig(OUT_DIR / "pdp_ice_summary_grid.png", dpi=150)
 plt.close()
 
 print(f"\n Done. Saved {len(top_features)} individual PDP+ICE plots + 1 summary grid to {OUT_DIR}")
-print(" -> Compare CV R2/RMSE against rf_cv_results.json for apples-to-apples comparison.")
+print(" -> Feed xgb_permutation_importance.csv and xgb_mean_abs_shap.csv into 09_consolidate_model_comparison.py")
+print("    for the cross-model variable-importance agreement table.")

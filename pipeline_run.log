@@ -171,3 +171,61 @@
 [2026-08-05 16:03:17] [RUN]   Stage 02: Convert NetCDF and vector files to GeoTIFF
 [2026-08-05 16:03:21] [OK]    Stage 02 completed in 4.1s
 [2026-08-05 16:03:21] [RUN]   Stage 03: Align predictors to reference grid
+[2026-08-05 16:08:06] [OK]    Stage 03 completed in 4.8min
+[2026-08-05 16:08:06] [RUN]   Stage 04: Build predictor stack
+[2026-08-05 16:08:37] [OK]    Stage 04 completed in 30.8s
+[2026-08-05 16:08:37] [RUN]   Stage 05: Build predictor stack
+[2026-08-05 16:08:47] [OK]    Stage 05 completed in 10.0s
+[2026-08-05 16:08:47] [RUN]   Stage 06: Multicollinearity + VIF
+[2026-08-05 16:14:14] [OK]    Stage 06 completed in 5.4min
+[2026-08-05 16:14:14] [RUN]   Stage 07: Spatial autocorrelation
+[2026-08-05 16:14:57] [OK]    Stage 07 completed in 43.9s
+[2026-08-05 16:14:57] [RUN]   Stage 08: XGBoost model
+[2026-08-05 16:15:52] [OK]    Stage 08 completed in 54.7s
+[2026-08-05 16:15:52] [RUN]   Stage 09: Spatial models: OLS + SEM + GWR
+[2026-08-05 16:17:28] [OK]    Stage 09 completed in 1.6min
+[2026-08-05 16:17:28] Pipeline finished.
+[2026-08-05 17:09:38] =======================================================
+[2026-08-05 17:09:38] Pipeline started
+[2026-08-05 17:09:38] [RUN]   Stage 01: Prepare reference grid
+[2026-08-05 17:09:41] [OK]    Stage 01 completed in 3.0s
+[2026-08-05 17:09:41] [RUN]   Stage 02: Convert NetCDF and vector files to GeoTIFF
+[2026-08-05 17:09:49] [OK]    Stage 02 completed in 7.6s
+[2026-08-05 17:09:49] [RUN]   Stage 03: Align predictors to reference grid
+[2026-08-05 17:14:32] [OK]    Stage 03 completed in 4.7min
+[2026-08-05 17:14:32] [RUN]   Stage 04: Build predictor stack
+[2026-08-05 17:15:03] [OK]    Stage 04 completed in 30.4s
+[2026-08-05 17:15:03] [RUN]   Stage 05: Build predictor stack
+[2026-08-05 17:15:13] [OK]    Stage 05 completed in 9.9s
+[2026-08-05 17:15:13] [RUN]   Stage 06: Multicollinearity + VIF
+[2026-08-05 17:20:36] [OK]    Stage 06 completed in 5.4min
+[2026-08-05 17:20:36] [RUN]   Stage 07: Spatial autocorrelation
+[2026-08-05 17:21:18] [OK]    Stage 07 completed in 42.2s
+[2026-08-05 17:21:18] [RUN]   Stage 08: XGBoost model
+[2026-08-05 17:24:31] [OK]    Stage 08 completed in 3.2min
+[2026-08-05 17:24:31] [RUN]   Stage 09: Spatial models: OLS + SEM + GWR
+[2026-08-05 17:26:05] [OK]    Stage 09 completed in 1.6min
+[2026-08-05 17:26:05] Pipeline finished.
+[2026-08-05 23:07:26] =======================================================
+[2026-08-05 23:07:26] Pipeline started
+[2026-08-05 23:07:26] [RUN]   Stage 01: Prepare reference grid
+[2026-08-05 23:07:26] [OK]    Stage 01 completed in 0.6s
+[2026-08-05 23:07:26] [RUN]   Stage 02: Convert NetCDF and vector files to GeoTIFF
+[2026-08-05 23:07:31] [OK]    Stage 02 completed in 4.6s
+[2026-08-05 23:07:31] [RUN]   Stage 03: Align predictors to reference grid
+[2026-08-05 23:12:11] [OK]    Stage 03 completed in 4.7min
+[2026-08-05 23:12:11] [RUN]   Stage 04: Build predictor stack
+[2026-08-05 23:12:42] [OK]    Stage 04 completed in 30.4s
+[2026-08-05 23:12:42] [RUN]   Stage 05: Build predictor stack
+[2026-08-05 23:12:52] [OK]    Stage 05 completed in 9.9s
+[2026-08-05 23:12:52] [RUN]   Stage 06: Multicollinearity + VIF
+[2026-08-05 23:18:19] [OK]    Stage 06 completed in 5.5min
+[2026-08-05 23:18:19] [RUN]   Stage 07: Spatial autocorrelation
+[2026-08-05 23:19:01] [OK]    Stage 07 completed in 41.9s
+[2026-08-05 23:19:01] [RUN]   Stage 08: XGBoost model
+[2026-08-05 23:19:54] [OK]    Stage 08 completed in 53.3s
+[2026-08-05 23:19:54] [RUN]   Stage 09: Spatial models: OLS + SEM + GWR
+[2026-08-05 23:21:27] [OK]    Stage 09 completed in 1.6min
+[2026-08-05 23:21:27] [RUN]   Stage 10: Consolidate model comparison
+[2026-08-05 23:21:28] [OK]    Stage 10 completed in 0.6s
+[2026-08-05 23:21:28] Pipeline finished.

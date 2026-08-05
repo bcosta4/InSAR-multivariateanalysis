@@ -1,21 +1,33 @@
 r"""
 03_align_predictors.py
 ─────────────────────
-Reprojects/resamples all predictor rasters from variables_data to the canonical
-InSAR reference grid (EPSG:3155, same extent/shape as subsidence_clean.tif).
+Purpose
+-------
+Reprojects and resamples every predictor raster in variables_data onto the canonical InSAR reference grid, producing a co-registered set of aligned layers for a single, timestamped pipeline run.
 
-Inputs:
-- Source predictors in E:\Processing\InSAR_multivariate_analysis\variables_data
-- Reference grid from 01_prepare_reference_grid.py
+Method
+------
+Each predictor is reprojected onto the reference grid's CRS, transform, and shape using rasterio's reproject(), with resampling method chosen by variable type: bilinear for continuous variables, nearest-neighbor for categorical/nominal variables (to avoid meaningless averaging of category codes). 
+For continuous variables flagged for gap-filling, a nearest-valid-pixel fill (Euclidean distance transform) is applied after reprojection, restricted to the InSAR valid-pixel mask, to reduce sparse holes introduced by source-resolution mismatches; categorical variables are never filled this way. 
+North-up orientation of the reference grid and every aligned output is explicitly asserted after each write.
 
-Outputs:
-- Aligned rasters written to a run folder, e.g.E:\Processing\InSAR_multivariate_analysis\outputs\run_nX_YYYYMMDD\aligned\
+Inputs
+------
+- variables_data/*.tif: all source predictor rasters (terrain derivatives, ERA5/CCI-derived layers from 02, optical indices, snow/vegetation/soil layers, and categorical/nominal classification rasters).
+- subsidence_clean.tif, valid_mask.tif (from 01): reference grid and valid-pixel mask.
 
-Features:
-- Uses median by default for variables with median/mean alternatives
-- Optional nearest-valid fill AFTER reprojection for selected CONTINUOUS variables
-- Categorical/nominal variables use nearest-neighbor resampling and are NEVER bilinear-filled (averaging category codes is meaningless)
-- Uses rasterized surficial geology from 02_files_to_geotiff.py
+Outputs
+-------
+- outputs/run_nX_YYYYMMDD/aligned/<variable>_aligned.tif: one co-registered GeoTIFF per predictor, matched to the reference grid's CRS/extent/resolution.
+
+Dependencies
+------------
+rasterio, numpy, scipy (ndimage.distance_transform_edt).
+
+Reproducibility notes
+----------------------
+- Random seed: not applicable (deterministic reprojection and distance-transform fill).
+- Deterministic given identical inputs: Yes.
 """
 
 import re

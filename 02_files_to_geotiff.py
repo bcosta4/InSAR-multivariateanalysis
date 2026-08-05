@@ -1,16 +1,45 @@
 r"""
 02_files_to_geotiff.py
 ──────────────────────
-Creates analysis-ready GeoTIFF predictors from source files in variables_data.
+Purpose
+-------
+Converts source NetCDF climate/permafrost variables and one vector geology layer into analysis-ready GeoTIFF predictors, written back into the shared variables_data directory for reuse across pipeline runs.
 
-Rules:
-- Derived predictor files from NetCDF and vector->raster are written back into:
-    E:\Processing\InSAR_multivariate_analysis\variables_data
-- Model / pipeline outputs should go elsewhere later, e.g.:
-    E:\Processing\InSAR_multivariate_analysis\outputs\run_nX_YYYYMMDD\
+Method
+------
+For ERA5-Land variables, applies one of three temporal aggregation modes depending on variable type: mean state (e.g. soil moisture) computed as a straight temporal mean; 
+mean temperature (stl1, t2m) computed as a temporal mean with an automatic, idempotent Kelvin-to-Celsius conversion applied only if the input magnitude indicates Kelvin, plus derived annual degree-day totals above/below 0degC (DDT/DDF); 
+and accumulation (ssr, tp), computed as a per-calendar-year sum averaged across years, to correctly represent typical annual totals for flux/accumulation variables rather than a naive full-period sum. 
+All aggregations are computed for both the full year and the JJAS (June-September) subset. 
+CCI permafrost depth/temperature variables are aggregated via median or mean across the study period. 
+Surficial geology is rasterized from a vector polygon layer onto the InSAR reference grid using majority-category encoding, with an accompanying code-to-category lookup table. 
+All raster writes explicitly convert NetCDF pixel-center coordinates to pixel-edge bounds and enforce north-up (row 0 = northernmost) orientation.
 
-This script does NOT write to the model outputs folder.
-It only creates reusable predictor layers inside variables_data.
+Inputs
+------
+- era5land_stl1_daily_grid.nc, era5land_t2m_daily_grid.nc, era5land_ssr_2019_2024_merged.nc,  era5land_swvl1_2019_2024_merged.nc, era5land_tp_2019_2024_merged.nc: ERA5-Land daily climate variables.
+- ESACCI-PERMAFROST-L4-ALT/-GTD NetCDF products: active layer thickness and ground temperature at depth.
+- geology_tuk_rich_masked.gpkg: surficial geology polygons (field DESC2).
+- subsidence_clean.tif (from 01): reference grid for geology rasterization.
+
+Outputs
+-------
+- era5_<var>_mean_2019_2024.tif / _JJAS_mean_2019_2024.tif: temporal means.
+- era5_t2m_ddt/ddf_annual_mean_2019_2024.tif: annual degree-day totals.
+- era5_<ssr|tp>_annual_sum_mean_2019_2024.tif / _JJAS_sum_mean_2019_2024.tif: mean annual accumulation totals.
+- cci_<var>_<median|mean>_2019_2024.tif: aggregated permafrost depth/temperature layers.
+- geology_tuk_rich_DESC2_rasterized_3155.tif, geology_tuk_rich_DESC2_lookup.csv: rasterized geology and its category code lookup.
+
+Dependencies
+------------
+xarray, numpy, pandas, rasterio, geopandas.
+
+Reproducibility notes
+----------------------
+- Random seed: not applicable (deterministic aggregation and rasterization).
+- Deterministic given identical inputs: Yes. Geology category codes are
+  assigned by sorted alphabetical order of unique DESC2 values, so code
+  assignment is stable across runs given the same source vector file.
 """
 
 import os

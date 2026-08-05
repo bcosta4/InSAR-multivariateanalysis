@@ -1,13 +1,32 @@
 """
 01_prepare_reference_grid.py
 ────────────────────────────
-Loads the DS-InSAR velocity map, extracts the valid pixel mask, and
-exports the canonical reference grid that every subsequent script snaps to.
+Purpose
+-------
+Establishes the canonical reference grid that every subsequent script in the pipeline aligns to, derived from the DS-InSAR subsidence velocity map.
 
-Outputs (written next to this script in ./outputs/):
-  - reference_grid_meta.json   : CRS, transform, shape, nodata
-  - valid_mask.tif             : 1=valid InSAR pixel, 0=nodata
-  - subsidence_clean.tif       : velocity map with nodata set to NaN (float32)
+Method
+------
+Reads the InSAR velocity raster, identifies nodata pixels by matching the source sentinel value (with tolerance) and an additional out-of-range check, and replaces them with NaN. Produces a binary valid-pixel mask (1 = valid InSAR measurement) and exports the grid's CRS, affine transform, shape, and resolution as metadata for reuse by all downstream alignment steps.
+
+Inputs
+------
+- Network2_ifg_unw_Stack_TC1_velocity_map_masked_slope5deg.tif: DS-InSAR velocity map (source CRS, resolution, and extent define the reference grid).
+
+Outputs
+-------
+- reference_grid_meta.json: CRS (WKT + EPSG), affine transform, shape, resolution, and valid-pixel count.
+- valid_mask.tif: binary raster, 1 = valid InSAR pixel, 0/255 = nodata.
+- subsidence_clean.tif: velocity map with nodata sentinel replaced by NaN (float32).
+
+Dependencies
+------------
+rasterio, numpy.
+
+Reproducibility notes
+----------------------
+- Random seed: not applicable (deterministic I/O and masking only).
+- Deterministic given identical inputs: Yes.
 """
 
 import os

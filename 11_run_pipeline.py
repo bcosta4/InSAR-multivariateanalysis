@@ -36,6 +36,7 @@ STAGES = {
     "07": {"script": "07_spatial_autocorrelation.py",  "desc": "Spatial autocorrelation"},
     "08": {"script": "08_xgboost_model.py",            "desc": "XGBoost model"},
     "09": {"script": "09_spatial_model_gwr.py",        "desc": "Spatial models: OLS + SEM + GWR"},
+    "10": {"script": "10_consolidate_model_comparison.py", "desc": "Consolidate model comparison"},
 }
 
 # set False if done
@@ -48,7 +49,8 @@ RUN_STAGES = {
     "06": True,
     "07": True,
     "08": True,
-    "09": True,}
+    "09": True,
+    "10": True,}
 
 SCRIPT_DIR = Path(__file__).parent
 LOG_PATH   = SCRIPT_DIR / "pipeline_run.log"
