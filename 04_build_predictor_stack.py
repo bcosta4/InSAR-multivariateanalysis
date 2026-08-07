@@ -135,7 +135,7 @@ with rasterio.open(stack_path, "w", **stack_meta) as dst:
         vmin = float(np.nanmin(valid_vals)) if valid_vals.size else np.nan
         vmax = float(np.nanmax(valid_vals)) if valid_vals.size else np.nan
 
-        # Dead-variable diagnostic (merged from 04b)
+        # Dead-variable diagnostic
         n_unique = int(np.unique(valid_vals).size) if valid_vals.size else 0
         is_all_nan = valid_vals.size == 0
         is_constant = (not is_all_nan) and (n_unique == 1)

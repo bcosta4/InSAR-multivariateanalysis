@@ -1,4 +1,3 @@
-
 r"""
 08_xgboost_model.py
 
@@ -64,13 +63,10 @@ CATEGORICAL_VARS = [
     "dsw_trends", "permafrost_landcover_cls",
 ]
 
-# Spatial features included so XGBoost's variable-importance ranking is tested against
-# an explicit location signal - if a predictor still outranks x_norm/y_norm/dist_to_center,
-# that is direct evidence the predictor carries explanatory signal beyond pure spatial position.
+# Spatial features included so XGBoost's variable-importance ranking is tested against an explicit location signal - if a predictor still outranks x_norm/y_norm/dist_to_center, that is direct evidence the predictor carries explanatory signal beyond pure spatial position.
 SPATIAL_FEATURE_NAMES = ["x_norm", "y_norm", "dist_to_center"]
 
-# Spatial folds: was 2 (checkerboard parity), now hashed into N_FOLDS bins for a materially
-# more robust estimate of how stable the explained-variance level is across the landscape.
+# Spatial folds: was 2 (checkerboard parity), now hashed into N_FOLDS bins for a materially more robust estimate of how stable the explained-variance level is across the landscape.
 N_FOLDS = 8
 
 XGB_PARAMS = dict(
@@ -130,7 +126,7 @@ def morans_i_on_residuals(residuals, coords_px, k=MORAN_K_NEIGHBORS, max_pts=MOR
     mi = esda.Moran(residuals, w)
     return float(mi.I), float(mi.p_sim), int(len(residuals))
 
-print("=== 07 XGBoost Driver-Attribution Robustness Check (v7 - explanatory framing, not predictive benchmark) ===")
+print("=== 07 XGBoost Driver-Attribution Robustness Check (v8 - PDP restricted to validated drivers) ===")
 print(f" Executing script: {Path(__file__).resolve()}")
 
 run_dir = get_run_dir()
@@ -347,13 +343,41 @@ with open(OUT_DIR / "xgb_cv_results.json", "w") as f:
 print("\n Saved xgb_cv_results.json")
 
 # ─── PDP + centered-ICE plots: functional form of each driver's effect ────
-print("\n=== PDP + centered-ICE plots (top variables by permutation importance) ===")
+print("\n=== PDP + centered-ICE plots (restricted to validated drivers) ===")
 print(" CAVEAT: ICE curves are drawn from spatially autocorrelated pixels, "
       "not independent samples - percentile bands below somewhat understate "
       "true pixel-to-pixel uncertainty.")
 
-top_features = perm_df["feature"].head(TOP_N_FEATURES).tolist()
-print(f" Top {TOP_N_FEATURES} variables: {top_features}")
+AGREEMENT_CSV = OUT_DIR / "variable_importance_agreement.csv"
+
+if AGREEMENT_CSV.exists():
+    agreement_df = pd.read_csv(AGREEMENT_CSV, index_col=0)
+    if "reliable_driver" in agreement_df.columns:
+        reliable_vars = agreement_df.index[agreement_df["reliable_driver"] == True].tolist()
+        top_features = [f for f in reliable_vars if f in feature_names]
+        missing = [f for f in reliable_vars if f not in feature_names]
+        print(f" Loaded variable_importance_agreement.csv - restricting PDP/ICE to "
+              f"reliable_driver=True variables only: {top_features}")
+        if missing:
+            print(f" WARNING: {len(missing)} reliable_driver variable(s) not in this "
+                  f"model's feature set, skipped: {missing}")
+        if not top_features:
+            raise RuntimeError(
+                "variable_importance_agreement.csv found but no reliable_driver=True "
+                "variables intersect this model's feature set - check upstream pipeline."
+            )
+    else:
+        print(" WARNING: variable_importance_agreement.csv found but missing "
+              "'reliable_driver' column - falling back to permutation-importance ranking.")
+        top_features = [f for f in perm_df["feature"].tolist() if f not in SPATIAL_FEATURE_NAMES][:TOP_N_FEATURES]
+else:
+    print(" variable_importance_agreement.csv not found yet (run 09/10 first for the "
+          "validated list). Falling back to top permutation-importance variables, "
+          "EXCLUDING spatial control features (they are location-signal controls, "
+          "not candidate drivers, and must never appear in PDP/ICE output).")
+    top_features = [f for f in perm_df["feature"].tolist() if f not in SPATIAL_FEATURE_NAMES][:TOP_N_FEATURES]
+
+print(f" Final PDP/ICE variable set ({len(top_features)}): {top_features}")
 
 rng_pdp = np.random.default_rng(42)
 stability_idx = rng_pdp.choice(len(X_df), size=min(PDP_STABILITY_N, len(X_df)), replace=False)
@@ -450,11 +474,11 @@ for feature in top_features:
         pdp_data_store[feature] = (x_vals, ice_curves)
     print(f"   Saved pdp_ice_{safe_name}.png / .csv")
 
-print(" Generating summary grid (PDP panel only, all top variables)...")
+print(" Generating summary grid (PDP panel only, all validated variables)...")
 n_cols = 3
 n_rows = int(np.ceil(len(top_features) / n_cols))
 fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
-axes = axes.flatten()
+axes = np.atleast_1d(axes).flatten()
 for i, feature in enumerate(top_features):
     if feature in categorical_feats:
         plot_categorical_pdp_ice(feature, axes[i])
@@ -471,7 +495,7 @@ for i, feature in enumerate(top_features):
     axes[i].set_title(feature, fontsize=9)
 for j in range(len(top_features), len(axes)):
     axes[j].axis("off")
-plt.suptitle(f"PDP: Top {TOP_N_FEATURES} Variables by Permutation Importance", fontsize=12)
+plt.suptitle(f"PDP: Validated Drivers (reliable_driver=True) - {len(top_features)} variables", fontsize=12)
 plt.tight_layout()
 plt.savefig(OUT_DIR / "pdp_ice_summary_grid.png", dpi=150)
 plt.close()

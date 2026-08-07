@@ -1,72 +1,38 @@
-
 r"""
 10_consolidate_model_comparison.py
 
 Purpose
 -------
-Builds the paper's central results table: a cross-model variable-importance
-agreement table answering "which variables explain InSAR subsidence, and do
-independent methods (linear, spatially-varying, nonlinear) agree on their
-importance, direction, and actual explanatory weight?" This is an explanatory
-(driver-attribution) synthesis, not a predictive-model leaderboard.
-Also produces a secondary robustness table (explained variance + residual
-spatial autocorrelation per method) and a reproducibility appendix.
+Builds the paper's central results table: a cross-model variable-importance agreement table answering "which variables explain InSAR subsidence, and do independent methods (linear, spatially-varying, nonlinear) agree on their importance, direction, and actual explanatory weight?". 
+This is an explanatory (driver-attribution) synthesis, not a predictive-model leaderboard.
+Also produces a secondary robustness table (explained variance + residual spatial autocorrelation per method) and a reproducibility appendix.
 
-NOTE: There is no standalone Random Forest script/output in this pipeline -
-XGBoost is the sole tree-based (nonlinear) comparator alongside OLS, SEM,
-and GWR (linear / spatially-varying). RF is no longer referenced anywhere
-in this script.
+NOTE: There is no standalone Random Forest script/output in this pipeline - XGBoost is the sole tree-based (nonlinear) comparator alongside OLS, SEM, and GWR (linear / spatially-varying). RF is no longer referenced anywhere in this script.
 
 Method
 ------
-Reads each model's own saved results/importance files from the run directory
-(never hand-typed) and aligns them on a common variable name (aggregating
-one-hot dummy coefficient names from OLS/SEM back to their parent categorical
-variable, matching XGBoost's native-categorical column names), producing:
+Reads each model's own saved results/importance files from the run directory (never hand-typed) and aligns them on a common variable name (aggregating one-hot dummy coefficient names from OLS/SEM back to their parent categorical variable, matching XGBoost's native-categorical column names), producing:
 
-1. A ranked importance/coefficient-magnitude table per method (XGBoost
-   permutation importance + mean |SHAP|, OLS/SEM standardized coefficient
-   magnitude, GWR mean absolute local coefficient), each also expressed as a
-   "variance_share_pct" - each method's per-variable importance normalized
-   to sum to 100% within that method - so magnitude is comparable across
-   methods with very different raw importance scales (e.g. SHAP values vs
-   VIF-filtered regression coefficients).
-2. A rank-agreement score (mean rank + pairwise Spearman correlation across
-   methods) so agreement/disagreement is quantified, not just visually
-   inspected.
-3. A "reliable_driver" flag: a variable must satisfy BOTH a rank-agreement
-   criterion (present in the top N of at least MIN_METHODS_IN_TOP_N methods)
-   AND a numerical-weight criterion (mean variance_share_pct across methods
-   >= MIN_VARIANCE_SHARE_PCT) to be labeled reliable. This directly guards
-   against the failure mode where a variable ranks highly everywhere but
-   explains a trivial fraction of variance in every method - agreement on
-   an unimportant variable is not evidence of a real driver.
-4. A robustness/explained-variance table flagging which methods were
-   evaluated under spatial-fold robustness checks vs in-sample fit, so this
-   distinction can never be silently lost in the manuscript.
+1. A ranked importance/coefficient-magnitude table per method (XGBoost permutation importance + mean |SHAP|, OLS/SEM standardized coefficient magnitude, GWR mean absolute local coefficient), each also expressed as a "variance_share_pct" - each method's per-variable importance normalized to sum to 100% within that method - so magnitude is comparable across methods with very different raw importance scales (e.g. SHAP values vs VIF-filtered regression coefficients).
+2. A rank-agreement score (mean rank + pairwise Spearman correlation across methods) so agreement/disagreement is quantified, not just visually inspected.
+3. A "reliable_driver" flag: a variable must satisfy BOTH a rank-agreement criterion (present in the top N of at least MIN_METHODS_IN_TOP_N methods) AND a numerical-weight criterion (mean variance_share_pct across methods >= MIN_VARIANCE_SHARE_PCT) to be labeled reliable. This directly guards against the failure mode where a variable ranks highly everywhere but explains a trivial fraction of variance in every method - agreement on an unimportant variable is not evidence of a real driver.
+4. A robustness/explained-variance table flagging which methods were evaluated under spatial-fold robustness checks vs in-sample fit, so this distinction can never be silently lost in the manuscript.
 
 Inputs
 ------
 - xgb_permutation_importance.csv, xgb_mean_abs_shap.csv (XGBoost)
-- ols_sem_standardized_coefficients.csv (OLS + SEM, one row per variable,
-  already dummy-aggregated)
-- gwr_local_coefficient_summary.csv (GWR, one row per variable, already
-  dummy-aggregated)
+- ols_sem_standardized_coefficients.csv (OLS + SEM, one row per variable, already dummy-aggregated)
+- gwr_local_coefficient_summary.csv (GWR, one row per variable, already dummy-aggregated)
 - model_comparison.csv (model-level R2/AIC/Moran's I for OLS/SEM/GWR)
 - xgb_cv_results.json, sem_results.json, gwr_results.json (robustness table)
 All in the same run directory.
 
 Outputs
 -------
-- variable_importance_agreement.csv: one row per variable, per-method
-  importance, per-method variance_share_pct, per-method rank, mean rank,
-  mean variance_share_pct, reliable_driver flag.
-- variable_importance_rank_agreement_matrix.csv: pairwise Spearman rank
-  correlation across methods.
-- model_comparison_final.csv: one row per model, explained variance,
-  validation method, residual Moran's I, comparability note.
-- reproducibility_appendix.csv: one row per script, seed, key package
-  versions, determinism note.
+- variable_importance_agreement.csv: one row per variable, per-method importance, per-method variance_share_pct, per-method rank, mean rank, mean variance_share_pct, reliable_driver flag.
+- variable_importance_rank_agreement_matrix.csv: pairwise Spearman rank correlation across methods.
+- model_comparison_final.csv: one row per model, explained variance, validation method, residual Moran's I, comparability note.
+- reproducibility_appendix.csv: one row per script, seed, key package versions, determinism note.
 
 Dependencies
 ------------
@@ -93,23 +59,13 @@ TOP_N_FOR_AGREEMENT = 10
 MIN_METHODS_IN_TOP_N = 3          # must be in top-10 in at least 3 of the available methods
 MIN_VARIANCE_SHARE_PCT = 1.0      # mean variance share across methods must be >= 1%
 
-# Spatial-control coordinate features (x_norm, y_norm, dist_to_center, etc.) are
-# deliberately included in XGBoost as controls for residual spatial structure, but
-# they are NOT physical/environmental drivers and were never fit in OLS/SEM/GWR
-# (correctly, since they don't belong in an explanatory covariate set). They must
-# never be labeled reliable_driver=True regardless of how high they rank in
-# XGBoost alone - a location coordinate outranking real predictors is evidence of
-# unexplained spatial structure, not evidence of a driver mechanism.
+# Spatial-control coordinate features (x_norm, y_norm, dist_to_center, etc.) are deliberately included in XGBoost as controls for residual spatial structure, but they are NOT physical/environmental drivers and were never fit in OLS/SEM/GWR (correctly, since they don't belong in an explanatory covariate set). 
+# They must never be labeled reliable_driver=True regardless of how high they rank in XGBoost alone - a location coordinate outranking real predictors is evidence of unexplained spatial structure, not evidence of a driver mechanism.
 SPATIAL_CONTROL_VARS = ["x_norm", "y_norm", "dist_to_center"]
 
-# GWR uses a fundamentally different estimand (local, spatially-varying coefficients)
-# from the three global methods (XGBoost, OLS, SEM) and is fit on a much smaller
-# VIF-/modal-filtered subset of continuous-only predictors. Averaging its rank/share
-# directly into the same cross-model mean as global methods lets GWR-only outlier
-# behavior (e.g. one variable's local coefficient spiking due to local collinearity)
-# dominate the pooled importance score. GWR is therefore reported as a separate
-# column for context but EXCLUDED from mean_rank_across_methods / mean_variance_share_pct,
-# which are computed only from methods sharing a comparable global-effect estimand.
+# GWR uses a fundamentally different estimand (local, spatially-varying coefficients) from the three global methods (XGBoost, OLS, SEM) and is fit on a much smaller VIF-/modal-filtered subset of continuous-only predictors. 
+# Averaging its rank/share directly into the same cross-model mean as global methods lets GWR-only outlier behavior (e.g. one variable's local coefficient spiking due to local collinearity) dominate the pooled importance score. 
+# GWR is therefore reported as a separate column for context but EXCLUDED from mean_rank_across_methods / mean_variance_share_pct, which are computed only from methods sharing a comparable global-effect estimand.
 GWR_METHOD_PREFIX = "GWR_"
 
 def parse_run_key(path):
@@ -231,10 +187,7 @@ gwr_coef_summary = load_csv(run_dir / "gwr_local_coefficient_summary.csv")
 gwr_outlier_flags = None
 if gwr_coef_summary is not None:
     gwr_coef_summary = gwr_coef_summary.set_index("variable")
-    # UPDATED: use median_abs_coef (robust to local-collinearity outlier pixels)
-    # as the primary GWR importance signal, rather than the raw mean, which can
-    # be inflated 10-30x by a handful of unstable pixels (see 09_spatial_model_gwr.py
-    # v15 patch notes). Mean is still available in the raw file for inspection.
+    # Use median_abs_coef (robust to local-collinearity outlier pixels) as the primary GWR importance signal, rather than the raw mean, which can be inflated 10-30x by a handful of unstable pixels (see 09_spatial_model_gwr.py. Mean is still available in the raw file for inspection.
     if "median_abs_coef" in gwr_coef_summary.columns:
         importance_frames["GWR_median_abs_local_coef"] = gwr_coef_summary["median_abs_coef"]
     elif "mean_abs_coef" in gwr_coef_summary.columns:
@@ -251,9 +204,7 @@ if importance_frames:
     if gwr_outlier_flags is not None:
         combined["gwr_outlier_flag"] = gwr_outlier_flags
 
-    # Variance share (%): each method's importance normalized to sum to 100%
-    # within that method, so raw-scale differences (SHAP vs regression coef)
-    # don't distort the numerical-weight comparison.
+    # Variance share (%): each method's importance normalized to sum to 100% within that method, so raw-scale differences (SHAP vs regression coef) don't distort the numerical-weight comparison.
     share_cols = []
     for col in method_cols:
         share_col = f"{col}_share_pct"
@@ -271,10 +222,8 @@ if importance_frames:
     primary_rank_cols = [f"{c}_rank" for c in primary_cols]
     gwr_rank_cols = [f"{c}_rank" for c in gwr_cols]
 
-    # PRIMARY agreement metrics use only methods with a comparable global-effect
-    # estimand (XGBoost permutation, XGBoost SHAP, OLS, SEM). GWR is reported
-    # separately below - see GWR_METHOD_PREFIX note in CONFIG - so a single
-    # outlier local coefficient in GWR cannot dominate the pooled score.
+    # PRIMARY agreement metrics use only methods with a comparable global-effect estimand (XGBoost permutation, XGBoost SHAP, OLS, SEM). 
+    # GWR is reported separately below - see GWR_METHOD_PREFIX note in CONFIG - so a single outlier local coefficient in GWR cannot dominate the pooled score.
     combined["mean_rank_across_methods"] = combined[primary_rank_cols].mean(axis=1)
     combined["mean_variance_share_pct"] = combined[primary_share_cols].mean(axis=1)
     combined["n_methods_present"] = combined[primary_cols].notna().sum(axis=1)
@@ -349,7 +298,7 @@ else:
     print(" [WARNING] No importance files found - check that XGBoost/GWR/OLS/SEM scripts "
           "have been run and saved their importance/coefficient outputs to this run directory.")
 
-# --- 3. Reproducibility appendix --------------------------------------------
+# --- 3. Reproducibility appendix -------------------------------------------
 repro_rows = [
     {"script": "06_multicollinearity_vif.py", "seed": 42, "key_packages": "statsmodels", "determinism_note": "Deterministic"},
     {"script": "07_spatial_autocorrelation.py", "seed": "42 (semivariogram); unseeded (LISA permutations)", "key_packages": "libpysal, esda, skgstat", "determinism_note": "Moran's I / semivariogram deterministic; LISA p-values vary run-to-run (no seed param passed to Moran_Local)"},

@@ -131,18 +131,14 @@ VARIABLES = {
     "cci_t10m":  {"path": str(DATA_DIR / f"cci_t10m_{STAT_PREFERENCE}_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
 
     # ERA5-derived rasters from 02 (all continuous)
-    "era5_stl1_mean":       {"path": str(DATA_DIR / "era5_stl1_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_stl1_jjas_mean":  {"path": str(DATA_DIR / "era5_stl1_JJAS_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_t2m_mean":        {"path": str(DATA_DIR / "era5_t2m_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_t2m_jjas_mean":   {"path": str(DATA_DIR / "era5_t2m_JJAS_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_ddt":             {"path": str(DATA_DIR / "era5_t2m_ddt_annual_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_ddf":             {"path": str(DATA_DIR / "era5_t2m_ddf_annual_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_ssr_mean":        {"path": str(DATA_DIR / "era5_ssr_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_ssr_jjas_mean":   {"path": str(DATA_DIR / "era5_ssr_JJAS_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_swvl1_mean":      {"path": str(DATA_DIR / "era5_swvl1_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_swvl1_jjas_mean": {"path": str(DATA_DIR / "era5_swvl1_JJAS_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_tp_mean":         {"path": str(DATA_DIR / "era5_tp_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
-    "era5_tp_jjas_mean":    {"path": str(DATA_DIR / "era5_tp_JJAS_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
+    "era5_ddt":             {"path": str(DATA_DIR / "era5_stl1_ddt_annual_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
+    "era5_ddf":             {"path": str(DATA_DIR / "era5_stl1_ddf_annual_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
+    "era5_ssr_mean":        {"path": str(DATA_DIR / "era5_ssr_annual_sum_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
+    "era5_ssr_jjas_mean":   {"path": str(DATA_DIR / "era5_ssr_JJAS_sum_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
+    "era5_swvl1_median":      {"path": str(DATA_DIR / "era5_swvl1_median_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
+    "era5_swvl1_jjas_median": {"path": str(DATA_DIR / "era5_swvl1_JJAS_median_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
+    "era5_tp_mean":         {"path": str(DATA_DIR / "era5_tp_annual_sum_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
+    "era5_tp_jjas_mean":    {"path": str(DATA_DIR / "era5_tp_JJAS_sum_mean_2019_2024.tif"), "resample": R.bilinear, "dtype": "float32", "nearest_fill": True},
 
     # Optical / vegetation indices (continuous)
     "bsi":   {"path": pick(DATA_DIR / "BSI_median_JJAS_2019_2024_masked.tif",   DATA_DIR / "BSI_mean_JJAS_2019_2024_masked.tif"),   "resample": R.bilinear, "dtype": "float32", "nearest_fill": False},
@@ -188,23 +184,21 @@ with rasterio.open(REF_PATH) as ref:
     ref_trans = ref.transform
     ref_h, ref_w = ref.height, ref.width
 
-# Sanity check (v2): confirm the reference grid itself is north-up BEFORE using it as dst_transform for every single reproject() call below.
+# Sanity check: confirm the reference grid itself is north-up BEFORE using it as dst_transform for every single reproject() call below.
 assert_north_up(ref_trans, "reference grid (subsidence_clean.tif)")
 print("[CHECK] Reference grid transform confirmed north-up.")
 
 with rasterio.open(VALID_MASK_PATH) as vm:
     valid_mask_raw = vm.read(1)
-
 n_ones = int((valid_mask_raw == 1).sum())
 n_total = valid_mask_raw.size
 frac_ones = n_ones / n_total
 print(f"[CHECK] valid_mask.tif: {n_ones}/{n_total} pixels == 1 ({frac_ones*100:.1f}%)")
 if frac_ones > 0.95 or frac_ones < 0.01:
     print("[WARNING] valid_mask fraction looks unusual - verify polarity.")
-
 valid_mask = (valid_mask_raw == 1)
 
-print("=== 03 Align Predictors (v2, geometry check) ===")
+print("=== 03 Align Predictors (ERA5 filename fix + loud skip warnings) ===")
 print(f"Run dir         : {run_dir}")
 print(f"Stat preference : {STAT_PREFERENCE}")
 print(f"Reference grid  : {ref_h}x{ref_w} @ {abs(ref_trans.a):.1f}m {ref_crs}")
@@ -214,9 +208,9 @@ skipped, done, failed = [], [], []
 for name, cfg in VARIABLES.items():
     src_path = cfg["path"]
     if src_path is None or not Path(src_path).exists():
-        skipped.append(name)
+        print(f"[SKIP - FILE NOT FOUND] {name:<28} -> {src_path}")
+        skipped.append({"variable": name, "path": src_path})
         continue
-
     out_path = ALIGNED_DIR / f"{name}_aligned.tif"
     resample_method = cfg["resample"]
     dtype = cfg["dtype"]
@@ -228,7 +222,6 @@ for name, cfg in VARIABLES.items():
             src_nodata_val = src.nodata
             src_dtype = src.dtypes[0]
 
-
             if dtype == "float32":
                 dst_arr = np.full((ref_h, ref_w), np.nan, dtype=np.float32)
                 dst_nodata = np.nan
@@ -238,14 +231,10 @@ for name, cfg in VARIABLES.items():
             else:
                 dst_arr = np.full((ref_h, ref_w), -9999, dtype=np.int16)
                 dst_nodata = -9999
-
-
             if src_nodata_val is not None:
                 reproj_src_nodata = src_nodata_val
             else:
                 reproj_src_nodata = safe_src_nodata_fallback(src_dtype)
-
-
             reproject(
                 source=rasterio.band(src, 1),
                 destination=dst_arr,
@@ -261,8 +250,6 @@ for name, cfg in VARIABLES.items():
         print(f"[FAIL] {name:<28} -> {type(e).__name__}: {e}")
         failed.append(name)
         continue
-
-
     if do_fill and dtype == "float32" and not is_categorical:
         n_before = int(np.isnan(dst_arr[valid_mask]).sum())
         dst_arr = nearest_fill(dst_arr, valid_mask)
@@ -270,8 +257,6 @@ for name, cfg in VARIABLES.items():
         fill_note = f" | nearest-fill {n_before}->{n_after}"
     else:
         fill_note = " | categorical (no fill)" if is_categorical else ""
-
-
     meta = {
         "driver": "GTiff",
         "crs": ref_crs,
@@ -286,10 +271,8 @@ for name, cfg in VARIABLES.items():
 
     with rasterio.open(out_path, "w", **meta) as dst:
         dst.write(dst_arr, 1)
-
-    # Sanity check (v2): confirm each aligned output is still north-up.
+    # Sanity check: confirm each aligned output is still north-up.
     assert_north_up(out_path, name)
-
 
     print(f"[OK] {name:<28} -> {out_path.name}{fill_note}")
     done.append(name)
@@ -297,7 +280,8 @@ for name, cfg in VARIABLES.items():
 print(f"\nAligned: {len(done)}")
 print(f"Skipped (file not found): {len(skipped)}")
 if skipped:
-    print(skipped)
+    for s in skipped:
+        print(f"    - {s['variable']}: {s['path']}")
 print(f"Failed (error during reproject): {len(failed)}")
 if failed:
     print(failed)

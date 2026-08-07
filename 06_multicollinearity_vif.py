@@ -112,7 +112,6 @@ def gvif_categorical(df_all, cat_var, other_vars):
     df_dummy = dummies.shape[1]
     if df_dummy == 0:
         return np.nan, np.nan, 0
-
     combined = pd.concat([dummies, other_vars], axis=1)
     combined = combined.loc[:, combined.std() > 1e-10]  # drop zero-variance cols
 
@@ -131,7 +130,6 @@ def gvif_categorical(df_all, cat_var, other_vars):
         gvif = np.inf
     else:
         gvif = (det_R11 * det_R22) / det_R
-
     gvif_adj = gvif ** (1.0 / (2 * df_dummy)) if np.isfinite(gvif) else np.inf
     return gvif, gvif_adj, df_dummy
 
@@ -213,7 +211,6 @@ while True:
 
     history.append({"iteration": iteration, "dropped": worst["variable"],
                      "type": worst["type"], "score": worst["comparable_score"]})
-
     if worst["type"] == "continuous":
         remaining_cont.remove(worst["variable"])
     else:

@@ -1,4 +1,3 @@
-
 r"""
 09_spatial_model_gwr.py
 
@@ -89,7 +88,7 @@ GWR_BW_WIDEN_FACTOR = 1.75
 GWR_BW_CEILING_FRAC = 0.98
 GWR_BW_MAX_WIDEN_FACTOR = 2.0
 GWR_MAX_CEILING_RETRY = 3
-# ------------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 
 def log(msg):
     print(msg, flush=True)
@@ -332,8 +331,7 @@ y = df["subsidence_mm_yr"].values.reshape(-1, 1)
 model_comparison_rows = []
 ols_sem_coef_frames = {}  # NEW: collects standardized coefficient series per model
 
-# Standardized X for coefficient comparability (z-scored, so coefficients are
-# directly comparable in magnitude across variables of different original units)
+# Standardized X for coefficient comparability (z-scored, so coefficients are directly comparable in magnitude across variables of different original units)
 X_z = (X_df - X_df.mean()) / X_df.std().replace(0, 1)
 y_z = (y.ravel() - y.ravel().mean()) / y.ravel().std()
 
@@ -357,8 +355,7 @@ model_comparison_rows.append({
     "residual_moran_I": ols_moran_i, "residual_moran_p": ols_moran_p,
 })
 
-# NEW: standardized OLS coefficients (fit on z-scored X/y so coefficients are
-# directly interpretable as "std-devs of subsidence per std-dev of predictor")
+# Standardized OLS coefficients (fit on z-scored X/y so coefficients are directly interpretable as "std-devs of subsidence per std-dev of predictor")
 ols_z = LinearRegression().fit(X_z.values, y_z)
 ols_std_coefs = pd.Series(ols_z.coef_, index=feature_names)
 ols_sem_coef_frames["OLS_std_coef"] = aggregate_dummy_coefs_to_parent(ols_std_coefs, CATEGORICAL_VARS)
@@ -572,17 +569,11 @@ try:
             gwr_mean_abs_coefs[col_name] = float(np.mean(np.abs(coeffs)))
     log(f"  [GWR] Saved local R2 map + {len(gwr_col_names)} coefficient maps to {coeff_dir}")
 
-    # UPDATED (v15): GWR local coefficient summary - now robust to local-collinearity
-    # outlier pixels. A pixel-level GWR coefficient can spike by 10-30x the typical
-    # magnitude when the local moving window happens to contain near-collinear
-    # neighbors, even for variables with low GLOBAL VIF (local collinearity is
-    # invisible to a global VIF check). A plain mean is not robust to this - a
-    # handful of outlier pixels can dominate the whole-variable summary statistic
-    # and distort the cross-model importance comparison downstream. We now report
-    # BOTH the mean and the median absolute coefficient per variable, plus an
-    # outlier-ratio diagnostic (mean / median) so any variable where the two summary
-    # statistics diverge sharply is flagged for manual inspection of its coefficient
-    # map before being trusted as a driver.
+    # GWR local coefficient summary - robust to local-collinearity outlier pixels. 
+    # A pixel-level GWR coefficient can spike by 10-30x the typical magnitude when the local moving window happens to contain near-collinear neighbors, even for variables with low GLOBAL VIF (local collinearity is
+    # invisible to a global VIF check). 
+    # A plain mean is not robust to this - a handful of outlier pixels can dominate the whole-variable summary statistic and distort the cross-model importance comparison downstream. 
+    # We report BOTH the mean and the median absolute coefficient per variable, plus an outlier-ratio diagnostic (mean / median) so any variable where the two summary statistics diverge sharply is flagged for manual inspection of its coefficient map before being trusted as a driver.
     OUTLIER_RATIO_FLAG_THRESHOLD = 3.0  # mean/median > 3x suggests outlier-pixel-driven inflation
 
     gwr_mean_abs_coefs = {}
